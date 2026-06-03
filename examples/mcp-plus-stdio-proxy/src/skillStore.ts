@@ -7,8 +7,11 @@ export type SkillNote = {
     title: string;
     summary: string;
     steps: string[];
+    do?: string[];
     whenToUse?: string;
+    why?: string;
     avoid?: string;
+    pitfalls?: string[];
     updatedAt: string;
 };
 
@@ -17,8 +20,11 @@ export type SkillWriteInput = {
     title: string;
     summary: string;
     steps?: string[];
+    do?: string[];
     whenToUse?: string;
+    why?: string;
     avoid?: string;
+    pitfalls?: string[];
 };
 
 export type SkillReadInput = {
@@ -42,7 +48,7 @@ export function createMemorySkillStore(initial?: Record<string, SkillNote[]>): S
         },
         async read(serverId, input) {
             const entries = notes.get(serverId) ?? [];
-            return input?.chapter === undefined ? [...entries] : entries.filter(entry => entry.chapter === input.chapter);
+            return filterSkillNotes(entries, input?.chapter);
         },
         async write(serverId, input) {
             const next = normalizeSkillNote(input);
@@ -62,7 +68,7 @@ export function createFileSkillStore(rootDirectory: string): SkillStore {
         },
         async read(serverId, input) {
             const entries = await readServerNotes(rootDirectory, serverId);
-            return input?.chapter === undefined ? entries : entries.filter(entry => entry.chapter === input.chapter);
+            return filterSkillNotes(entries, input?.chapter);
         },
         async write(serverId, input) {
             const next = normalizeSkillNote(input);
@@ -75,6 +81,14 @@ export function createFileSkillStore(rootDirectory: string): SkillStore {
             return next;
         }
     };
+}
+
+function filterSkillNotes(entries: readonly SkillNote[], chapterOrNoteId: string | undefined): SkillNote[] {
+    if (chapterOrNoteId === undefined) {
+        return [...entries];
+    }
+
+    return entries.filter(entry => entry.chapter === chapterOrNoteId || entry.id === chapterOrNoteId);
 }
 
 function normalizeSkillNote(input: SkillWriteInput): SkillNote {
@@ -92,9 +106,12 @@ function normalizeSkillNote(input: SkillWriteInput): SkillNote {
         chapter,
         title,
         summary: input.summary.trim(),
-        steps: input.steps ?? [],
+        steps: input.steps ?? input.do ?? [],
+        do: input.do ?? input.steps ?? [],
         whenToUse: cleanOptional(input.whenToUse),
+        why: cleanOptional(input.why),
         avoid: cleanOptional(input.avoid),
+        pitfalls: input.pitfalls ?? (input.avoid === undefined ? undefined : [input.avoid]),
         updatedAt: new Date().toISOString()
     };
 }

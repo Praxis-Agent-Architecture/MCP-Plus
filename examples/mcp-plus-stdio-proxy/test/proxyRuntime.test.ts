@@ -72,6 +72,7 @@ describe('MCP+ stdio proxy runtime', () => {
             'browser_navigate',
             'browser_snapshot',
             'mcp_plus.expand',
+            'mcp_plus.finish',
             'mcp_plus.skill_read',
             'mcp_plus.skill_write'
         ]);
@@ -111,6 +112,7 @@ describe('MCP+ stdio proxy runtime', () => {
             'browser_network_requests',
             'browser_snapshot',
             'mcp_plus.expand',
+            'mcp_plus.finish',
             'mcp_plus.skill_read',
             'mcp_plus.skill_write'
         ]);
@@ -169,12 +171,224 @@ describe('MCP+ stdio proxy runtime', () => {
                 id: 'basic-page-read:read-dynamic-pages',
                 title: 'Read dynamic pages',
                 summary: 'Use snapshot first; expand console only when visible state is insufficient.',
-                serverId: 'playwright-plus'
+                serverId: 'playwright-plus',
+                whenToUse: 'Browser page-reading tasks',
+                pitfallsPreview: ['Do not call network tools before snapshot evidence.']
             }
         ]);
         expect(JSON.stringify(listed.tools)).toContain('Read dynamic pages');
+        expect(JSON.stringify(listed.tools)).toContain('when: Browser page-reading tasks');
+        expect(JSON.stringify(listed.tools)).toContain('pitfalls: Do not call network tools before snapshot evidence.');
         expect(JSON.stringify(readResult)).toContain('browser_snapshot before diagnostics');
         expect(JSON.stringify(readResult)).toContain('Do not call network tools before snapshot evidence.');
+    });
+
+    it('reads persisted skill notes by stored note id as well as chapter id', async () => {
+        const skillStore = createMemorySkillStore();
+        const runtime = createProxyRuntime({
+            manifest: {
+                server: {
+                    id: 'playwright-plus',
+                    title: 'Playwright MCP+',
+                    summary: 'Browser automation with folded lower-frequency capabilities.'
+                },
+                exposure: {
+                    pinnedTools: ['browser_navigate', 'browser_snapshot']
+                }
+            },
+            downstream: createDownstreamClient(),
+            skillStore
+        });
+
+        await runtime.initialize();
+        await runtime.callTool('mcp_plus.skill_write', {
+            chapter: 'basic-page-read',
+            title: 'Simple Page Read Order',
+            summary: 'Navigate first, then snapshot.',
+            steps: ['browser_navigate', 'browser_snapshot']
+        });
+
+        const readResult = await runtime.callTool('mcp_plus.skill_read', {
+            chapter: 'basic-page-read:simple-page-read-order'
+        });
+
+        expect(JSON.stringify(readResult)).toContain('Navigate first, then snapshot.');
+        expect(JSON.stringify(readResult)).toContain('browser_snapshot');
+    });
+
+    it('surfaces explicit instructions to write new success and failure experience into skills', async () => {
+        const runtime = createProxyRuntime({
+            manifest: {
+                server: {
+                    id: 'playwright-plus',
+                    title: 'Playwright MCP+',
+                    summary: 'Browser automation with folded lower-frequency capabilities.'
+                },
+                exposure: {
+                    pinnedTools: ['browser_navigate', 'browser_snapshot']
+                },
+                skills: {
+                    chapters: [
+                        {
+                            id: 'basic-page-read',
+                            title: 'Basic page read',
+                            summary: 'Navigate first, then snapshot.'
+                        }
+                    ]
+                }
+            },
+            downstream: createDownstreamClient()
+        });
+
+        await runtime.initialize();
+        const listed = await runtime.listTools();
+        const descriptions = listed.tools.map(tool => tool.description).join('\n\n');
+
+        expect(descriptions).toContain('If no stored note covers the workflow');
+        expect(descriptions).toContain('successful MCP usage pattern');
+        expect(descriptions).toContain('failure or pitfall');
+        expect(descriptions).toContain('finish with mcp_plus.finish before the final answer');
+        expect(descriptions).toContain('Default shouldWrite to true');
+        expect(descriptions).toContain('after two or more MCP tool calls');
+        expect(descriptions).toContain('Use shouldWrite false only when a stored note already covers the workflow');
+    });
+
+    it('adds a visible skill write reminder after native MCP calls when the server has no stored notes', async () => {
+        const runtime = createProxyRuntime({
+            manifest: {
+                server: {
+                    id: 'playwright-plus',
+                    title: 'Playwright MCP+',
+                    summary: 'Browser automation with folded lower-frequency capabilities.'
+                },
+                exposure: {
+                    pinnedTools: ['browser_navigate']
+                }
+            },
+            downstream: createDownstreamClient(),
+            skillStore: createMemorySkillStore()
+        });
+
+        await runtime.initialize();
+        const result = await runtime.callTool('browser_navigate', { url: 'https://example.com' });
+
+        expect(JSON.stringify(result)).toContain('MCP+ skill reminder');
+        expect(JSON.stringify(result)).toContain('finish with mcp_plus.finish before the final answer');
+        expect(JSON.stringify(result)).toContain('Default shouldWrite to true');
+        expect(JSON.stringify(result)).toContain('after any stateful browser/form/debugging interaction');
+    });
+
+    it('finishes the MCP+ workflow and writes a skill note when requested', async () => {
+        const skillStore = createMemorySkillStore();
+        const runtime = createProxyRuntime({
+            manifest: {
+                server: {
+                    id: 'playwright-plus',
+                    title: 'Playwright MCP+',
+                    summary: 'Browser automation with folded lower-frequency capabilities.'
+                },
+                exposure: {
+                    pinnedTools: ['browser_navigate']
+                }
+            },
+            downstream: createDownstreamClient(),
+            skillStore
+        });
+
+        await runtime.initialize();
+        const result = await runtime.callTool('mcp_plus.finish', {
+            finalAnswer: 'Done with the browser workflow.',
+            skill: {
+                shouldWrite: true,
+                chapter: 'basic-page-read',
+                title: 'Simple Browser Finish',
+                summary: 'Open the page, inspect state, and finish through MCP+.',
+                whenToUse: 'Simple form/quiz tasks in Chrome DevTools MCP+',
+                do: ['browser_navigate', 'browser_snapshot', 'mcp_plus.finish'],
+                why: 'Snapshot gives semantic labels and stable-enough uids, more reliable than screenshot guessing.',
+                pitfalls: ['Do not skip the final state check.'],
+                steps: ['legacy compatibility step'],
+                avoid: 'Legacy compatibility avoid text.'
+            }
+        });
+
+        expect(JSON.stringify(result)).toContain('Done with the browser workflow.');
+        expect(JSON.stringify(result)).toContain('skillWritten');
+        expect(await skillStore.read('playwright-plus', { chapter: 'basic-page-read' })).toEqual([
+            expect.objectContaining({
+                id: 'basic-page-read:simple-browser-finish',
+                title: 'Simple Browser Finish',
+                summary: 'Open the page, inspect state, and finish through MCP+.',
+                whenToUse: 'Simple form/quiz tasks in Chrome DevTools MCP+',
+                do: ['browser_navigate', 'browser_snapshot', 'mcp_plus.finish'],
+                why: 'Snapshot gives semantic labels and stable-enough uids, more reliable than screenshot guessing.',
+                pitfalls: ['Do not skip the final state check.']
+            })
+        ]);
+    });
+
+    it('finishes the MCP+ workflow without writing a skill note when skipped', async () => {
+        const skillStore = createMemorySkillStore();
+        const runtime = createProxyRuntime({
+            manifest: {
+                server: {
+                    id: 'playwright-plus',
+                    title: 'Playwright MCP+',
+                    summary: 'Browser automation with folded lower-frequency capabilities.'
+                },
+                exposure: {
+                    pinnedTools: ['browser_navigate']
+                }
+            },
+            downstream: createDownstreamClient(),
+            skillStore
+        });
+
+        await runtime.initialize();
+        const result = await runtime.callTool('mcp_plus.finish', {
+            finalAnswer: 'Done, no reusable workflow.',
+            skill: {
+                shouldWrite: false
+            }
+        });
+
+        expect(JSON.stringify(result)).toContain('Done, no reusable workflow.');
+        expect(JSON.stringify(result)).toContain('skillSkipped');
+        expect(await skillStore.list('playwright-plus')).toEqual([]);
+    });
+
+    it('does not add the native call skill reminder when stored notes already exist', async () => {
+        const skillStore = createMemorySkillStore({
+            'playwright-plus': [
+                {
+                    id: 'basic-page-read:simple',
+                    chapter: 'basic-page-read',
+                    title: 'Simple',
+                    summary: 'Existing note.',
+                    steps: ['browser_navigate'],
+                    updatedAt: '2026-06-03T00:00:00.000Z'
+                }
+            ]
+        });
+        const runtime = createProxyRuntime({
+            manifest: {
+                server: {
+                    id: 'playwright-plus',
+                    title: 'Playwright MCP+',
+                    summary: 'Browser automation with folded lower-frequency capabilities.'
+                },
+                exposure: {
+                    pinnedTools: ['browser_navigate']
+                }
+            },
+            downstream: createDownstreamClient(),
+            skillStore
+        });
+
+        await runtime.initialize();
+        const result = await runtime.callTool('browser_navigate', { url: 'https://example.com' });
+
+        expect(JSON.stringify(result)).not.toContain('MCP+ skill reminder');
     });
 
     it('forwards native tool calls to the downstream MCP server', async () => {
@@ -195,17 +409,16 @@ describe('MCP+ stdio proxy runtime', () => {
         await runtime.initialize();
         const result = await runtime.callTool('browser_navigate', { url: 'https://example.com' });
 
-        expect(result).toEqual({
-            content: [
-                {
-                    type: 'text',
-                    text: 'called browser_navigate {"url":"https://example.com"}'
-                }
-            ]
-        });
+        expect(isCallToolResult(result) ? result.content[0]?.text : undefined).toBe(
+            'called browser_navigate {"url":"https://example.com"}'
+        );
         expect(downstream.calls).toEqual([{ name: 'browser_navigate', arguments: { url: 'https://example.com' } }]);
     });
 });
+
+function isCallToolResult(value: unknown): value is { content: Array<{ type: string; text?: string }> } {
+    return typeof value === 'object' && value !== null && 'content' in value && Array.isArray(value.content);
+}
 
 function createDownstreamClient(): DownstreamMcpClient & { calls: Array<{ name: string; arguments?: unknown }> } {
     const calls: Array<{ name: string; arguments?: unknown }> = [];

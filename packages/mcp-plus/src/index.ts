@@ -73,6 +73,9 @@ export type SkillIndexEntry = {
     title: string;
     summary: string;
     serverId: string;
+    whenToUse?: string;
+    why?: string;
+    pitfallsPreview?: string[];
 };
 
 export type ServerCard = {
