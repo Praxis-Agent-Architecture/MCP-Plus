@@ -1,0 +1,19 @@
+{
+    "extends": "@modelcontextprotocol/tsconfig",
+    "include": ["./"],
+    "exclude": ["node_modules", "dist"],
+    "compilerOptions": {
+        "paths": {
+            "@mcp-plus/core": ["./node_modules/@mcp-plus/core/src/index.ts"],
+            "@modelcontextprotocol/client": ["./node_modules/@modelcontextprotocol/client/src/index.ts"],
+            "@modelcontextprotocol/client/stdio": ["./node_modules/@modelcontextprotocol/client/src/stdio.ts"],
+            "@modelcontextprotocol/client/_shims": ["./node_modules/@modelcontextprotocol/client/src/shimsNode.ts"],
+            "@modelcontextprotocol/core": [
+                "./node_modules/@modelcontextprotocol/client/node_modules/@modelcontextprotocol/core/src/index.ts"
+            ],
+            "@modelcontextprotocol/core/public": [
+                "./node_modules/@modelcontextprotocol/client/node_modules/@modelcontextprotocol/core/src/exports/public/index.ts"
+            ]
+        }
+    }
+}

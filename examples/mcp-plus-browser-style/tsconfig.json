@@ -1,0 +1,10 @@
+{
+    "extends": "@modelcontextprotocol/tsconfig",
+    "include": ["./"],
+    "exclude": ["node_modules", "dist"],
+    "compilerOptions": {
+        "paths": {
+            "@mcp-plus/core": ["./node_modules/@mcp-plus/core/src/index.ts"]
+        }
+    }
+}

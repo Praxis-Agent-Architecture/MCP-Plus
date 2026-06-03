@@ -1,0 +1,51 @@
+{
+    "name": "@mcp-plus/core",
+    "version": "0.0.0",
+    "description": "MCP+ host-side exposure enhancement layer",
+    "license": "MIT",
+    "type": "module",
+    "engines": {
+        "node": ">=20"
+    },
+    "keywords": [
+        "mcp",
+        "mcp-plus",
+        "tool-exposure"
+    ],
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.mts",
+            "import": "./dist/index.mjs"
+        }
+    },
+    "types": "./dist/index.d.mts",
+    "files": [
+        "dist"
+    ],
+    "scripts": {
+        "typecheck": "tsgo -p tsconfig.json --noEmit",
+        "build": "tsdown",
+        "prepack": "pnpm run build",
+        "lint": "eslint src/ test/ && prettier --ignore-path ../../.prettierignore --check .",
+        "lint:fix": "eslint src/ test/ --fix && prettier --ignore-path ../../.prettierignore --write .",
+        "check": "pnpm run typecheck && pnpm run lint",
+        "test": "vitest run",
+        "test:watch": "vitest"
+    },
+    "devDependencies": {
+        "@eslint/js": "catalog:devTools",
+        "@modelcontextprotocol/eslint-config": "workspace:^",
+        "@modelcontextprotocol/tsconfig": "workspace:^",
+        "@modelcontextprotocol/vitest-config": "workspace:^",
+        "@typescript/native-preview": "catalog:devTools",
+        "eslint": "catalog:devTools",
+        "eslint-config-prettier": "catalog:devTools",
+        "eslint-plugin-n": "catalog:devTools",
+        "prettier": "catalog:devTools",
+        "tsdown": "catalog:devTools",
+        "tsx": "catalog:devTools",
+        "typescript": "catalog:devTools",
+        "typescript-eslint": "catalog:devTools",
+        "vitest": "catalog:devTools"
+    }
+}

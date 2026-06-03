@@ -1,0 +1,16 @@
+{
+    "name": "@mcp-plus/example-browser-style",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "typecheck": "tsgo -p tsconfig.json --noEmit"
+    },
+    "dependencies": {
+        "@mcp-plus/core": "workspace:^"
+    },
+    "devDependencies": {
+        "@modelcontextprotocol/tsconfig": "workspace:^",
+        "@typescript/native-preview": "catalog:devTools",
+        "typescript": "catalog:devTools"
+    }
+}

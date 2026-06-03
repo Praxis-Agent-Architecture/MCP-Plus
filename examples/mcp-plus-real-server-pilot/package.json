@@ -1,0 +1,21 @@
+{
+    "name": "@mcp-plus/example-real-server-pilot",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "typecheck": "tsgo -p tsconfig.json --noEmit",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "@mcp-plus/core": "workspace:^",
+        "@modelcontextprotocol/client": "workspace:^"
+    },
+    "devDependencies": {
+        "@modelcontextprotocol/tsconfig": "workspace:^",
+        "@modelcontextprotocol/vitest-config": "workspace:^",
+        "@typescript/native-preview": "catalog:devTools",
+        "tsx": "catalog:devTools",
+        "typescript": "catalog:devTools",
+        "vitest": "catalog:devTools"
+    }
+}
