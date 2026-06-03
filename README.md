@@ -253,13 +253,6 @@ pnpm --filter @mcp-plus/example-stdio-proxy test
 pnpm --filter @mcp-plus/example-stdio-proxy typecheck
 ```
 
-## Publishing `@praxis-ai/mcp-plus`
-
-The package is published from `packages/mcp-plus` as `@praxis-ai/mcp-plus`. It intentionally has no runtime dependencies; development-only tooling stays in `devDependencies`, and the published package only includes `dist`.
-
-Publishing is handled by `.github/workflows/publish-mcp-plus.yml` on pushes to `main` that touch the MCP+ package, workspace lockfile, or the workflow itself. Add an npm automation token as the repository secret `NPM_TOKEN`; the workflow tests, typechecks, dry-runs the package,
-checks whether the exact package version already exists, and publishes only unpublished versions.
-
 ## Compatibility Promise
 
 MCP+ should always preserve the native MCP shape at the runtime boundary. Standard MCP clients should not need to understand MCP+ metadata for normal tool execution. MCP+ metadata is for wrappers, gateways, and host adapters that want better exposure planning, skill lifecycle,
