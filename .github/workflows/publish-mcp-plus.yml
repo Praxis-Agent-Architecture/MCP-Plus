@@ -69,18 +69,18 @@ jobs:
             - name: Check npm token
               id: npm-token
               env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.MCP_PLUS_RELEASE }}
               run: |
                   if [ -n "$NODE_AUTH_TOKEN" ]; then
                     echo "available=true" >> "$GITHUB_OUTPUT"
                   else
                     echo "available=false" >> "$GITHUB_OUTPUT"
-                    echo "NPM_TOKEN is not configured; skipping publish. Add the secret and rerun this workflow."
+                    echo "NPM_TOKEN or MCP_PLUS_RELEASE is not configured; skipping publish. Add the secret and rerun this workflow."
                   fi
 
             - name: Publish MCP Plus package
               if: steps.published.outputs.exists != 'true' && steps.npm-token.outputs.available == 'true'
               working-directory: packages/mcp-plus
               env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN || secrets.MCP_PLUS_RELEASE }}
               run: npm publish --access public
