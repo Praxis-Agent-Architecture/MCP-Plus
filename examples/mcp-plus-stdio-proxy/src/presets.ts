@@ -1,4 +1,4 @@
-import type { McpPlusManifest } from '@mcp-plus/core';
+import type { McpPlusManifest } from '@praxis-ai/mcp-plus';
 
 export type PresetName = 'playwright' | 'chrome-devtools' | 'github';
 

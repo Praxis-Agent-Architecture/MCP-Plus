@@ -1,174 +1,253 @@
-# MCP TypeScript SDK
+# MCP Plus
 
-<!-- prettier-ignore -->
-> [!IMPORTANT]
-> **This is the `main` branch which contains v2 of the SDK (currently in development, pre-alpha).**
->
-> We anticipate a stable v2 release in Q3 2026 along with the [updated MCP spec](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/). Until then, **v1.x remains the recommended version** for production use. v1.x will continue to receive bug fixes and security updates for at least 6 months after v2 ships to give people time to upgrade.
->
-> For v1 documentation, see the [V1 API docs](https://ts.sdk.modelcontextprotocol.io/). For v2 API docs, see [`/v2/`](https://ts.sdk.modelcontextprotocol.io/v2/).
+MCP Plus, or MCP+, is an exposure and authoring layer for Model Context Protocol servers.
 
-<!-- prettier-ignore -->
-> [!WARNING]
-> **We're temporarily restricting PRs to contributors only to manage reviewer capacity while implementation work for the [new spec](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) is ongoing**
->
-> Please continue to submit issues as your main source of feedback. We anticipate reopening once we have a stable release for the new spec, currently slated to launch on July 28, 2026.
+It is not a new protocol and it is not an MCP replacement. MCP+ keeps the runtime boundary MCP-compatible: hosts still discover tools through standard MCP, models still call standard MCP-shaped tools, and upstream servers can remain ordinary MCP servers.
 
-[![NPM Version - Server](https://img.shields.io/npm/v/%40modelcontextprotocol%2Fserver?label=%40modelcontextprotocol%2Fserver)](https://www.npmjs.com/package/@modelcontextprotocol/server)
-[![NPM Version - Client](https://img.shields.io/npm/v/%40modelcontextprotocol%2Fclient?label=%40modelcontextprotocol%2Fclient)](https://www.npmjs.com/package/@modelcontextprotocol/client) ![MIT licensed](https://img.shields.io/npm/l/%40modelcontextprotocol%2Fserver)
+MCP+ adds a small developer-authored sidecar that tells a wrapper or host adapter how to expose the server more efficiently:
 
-<details>
-<summary>Table of Contents</summary>
+- which tools should stay pinned as full MCP schemas;
+- which tools should fold into compact capability cards;
+- how folded tools can be expanded back into standard MCP schemas;
+- where server-bound skill notes should live;
+- how repeated MCP workflows should be remembered and reused.
 
-- [Overview](#overview)
-- [Packages](#packages)
-- [Installation](#installation)
-- [Getting Started](#getting-started)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
-- [License](#license)
+Think of the first implementation as a wrapper mode for existing MCP servers. A future native/Praxis mode can use the same MCP+ declarations with deeper host control.
 
-</details>
+## Why
 
-## Overview
+Large MCP servers can expose many tool schemas at once. In many hosts, those schemas become model-visible context every turn. That creates three practical problems:
 
-The Model Context Protocol (MCP) allows applications to provide context for LLMs in a standardized way, separating the concerns of providing context from the actual LLM interaction.
+- context pressure from full schemas that are rarely used;
+- unstable or expensive prompt-cache prefixes when tool surfaces change;
+- weak tool-use memory for server-specific workflows.
 
-This repository contains the TypeScript SDK implementation of the MCP specification. It runs on **Node.js**, **Bun**, and **Deno**, and ships:
+MCP+ addresses those issues without changing MCP itself. The wrapper keeps common tools visible, folds lower-frequency tools into an index, and provides server-bound skill read/write/finish tools so repeated workflows can become reusable guidance.
 
-- MCP **server** libraries (tools/resources/prompts, Streamable HTTP, stdio, auth helpers)
-- MCP **client** libraries (transports, high-level helpers, OAuth helpers)
-- Optional **middleware packages** for specific runtimes/frameworks (Express, Hono, Node.js HTTP)
-- Runnable **examples** (under [`examples/`](https://github.com/modelcontextprotocol/typescript-sdk/tree/main/examples))
+## Relationship To MCP
 
-## Packages
+MCP servers expose three core building blocks:
 
-This monorepo publishes split packages:
+- tools: model-controlled actions with JSON Schema inputs;
+- resources: application-controlled context sources;
+- prompts: user-controlled reusable workflow templates.
 
-- **`@modelcontextprotocol/server`**: build MCP servers
-- **`@modelcontextprotocol/client`**: build MCP clients
+MCP+ currently focuses on the tool exposure problem because full tool schemas are the biggest prompt-surface cost. The design keeps room for resources and prompts, but wrapper mode should stay conservative: native MCP semantics first, MCP+ metadata second.
 
-Tool and prompt schemas use [Standard Schema](https://standardschema.dev/) — bring Zod v4, Valibot, ArkType, or any compatible library.
+## Current Developer Paths
 
-### Middleware packages (optional)
+### 1. Wrap An Existing MCP Server
 
-The SDK also publishes small "middleware" packages under [`packages/middleware/`](https://github.com/modelcontextprotocol/typescript-sdk/tree/main/packages/middleware) that help you **wire MCP into a specific runtime or web framework**.
-
-They are intentionally thin adapters: they should not introduce new MCP functionality or business logic. See [`packages/middleware/README.md`](packages/middleware/README.md) for details.
-
-- **`@modelcontextprotocol/node`**: Node.js Streamable HTTP transport wrapper for `IncomingMessage` / `ServerResponse`
-- **`@modelcontextprotocol/express`**: Express helpers (app defaults + Host header validation)
-- **`@modelcontextprotocol/hono`**: Hono helpers (app defaults + JSON body parsing hook + Host header validation)
-
-## Installation
-
-### Server
+Use this path when you already have an MCP server and want context-efficient exposure without rewriting it.
 
 ```bash
-npm install @modelcontextprotocol/server
-# or
-bun add @modelcontextprotocol/server
-# or
-deno add npm:@modelcontextprotocol/server
+pnpm --filter @mcp-plus/example-stdio-proxy exec tsx src/stdio.ts \
+  --preset playwright \
+  -- npx -y @playwright/mcp@latest
 ```
 
-### Client
+For a Codex-style MCP config, the shape is:
 
-```bash
-npm install @modelcontextprotocol/client
-# or
-bun add @modelcontextprotocol/client
-# or
-deno add npm:@modelcontextprotocol/client
+```toml
+[mcp_servers.playwright-plus]
+command = "pnpm"
+args = [
+  "--dir", "/path/to/mcp-plus",
+  "--filter", "@mcp-plus/example-stdio-proxy",
+  "exec", "tsx", "src/stdio.ts",
+  "--preset", "playwright",
+  "--",
+  "npx", "-y", "@playwright/mcp@latest"
+]
+enabled = true
+startup_timeout_sec = 120
+env = { MCP_PLUS_SKILL_DIR = "/path/to/codex-home/mcp-plus-skills" }
 ```
 
-### Optional middleware packages
+The wrapper connects to the downstream MCP server over stdio, calls standard `tools/list`, then exposes a smaller MCP-compatible surface to the host.
 
-The SDK also publishes optional “middleware” packages that help you **wire MCP into a specific runtime or web framework** (for example Express, Hono, or Node.js `http`).
+### 2. Write An MCP+ Sidecar Manifest
 
-These packages are intentionally thin adapters and should not introduce additional MCP features or business logic. See [`packages/middleware/README.md`](packages/middleware/README.md) for details.
+Use this path when you maintain an MCP server and want a better default exposure plan.
 
-```bash
-# Node.js HTTP (IncomingMessage/ServerResponse) Streamable HTTP transport:
-npm install @modelcontextprotocol/node
+TypeScript projects can use `mcp-plus.config.ts`:
 
-# Express integration:
-npm install @modelcontextprotocol/express express
+```ts
+import { defineMcpPlusManifest } from '@praxis-ai/mcp-plus';
 
-# Hono integration:
-npm install @modelcontextprotocol/hono hono
-```
-
-## Getting Started
-
-Here is what an MCP server looks like. This minimal example exposes a single `greet` tool over stdio:
-
-```typescript
-import { McpServer } from '@modelcontextprotocol/server';
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
-import * as z from 'zod/v4';
-
-const server = new McpServer({ name: 'greeting-server', version: '1.0.0' });
-
-server.registerTool(
-    'greet',
-    {
-        description: 'Greet someone by name',
-        inputSchema: z.object({ name: z.string() })
+export default defineMcpPlusManifest({
+  server: {
+    id: 'browser',
+    title: 'Browser MCP',
+    summary: 'Browser automation with folded low-frequency diagnostics.'
+  },
+  exposure: {
+    pinnedTools: ['browser.open', 'page.snapshot'],
+    indexedTools: ['network.status'],
+    toolCards: {
+      'network.status': {
+        title: 'Network status',
+        summary: 'Inspect network requests only when diagnostics are needed.',
+        keywords: ['network', 'requests', '网络请求']
+      }
     },
-    async ({ name }) => ({
-        content: [{ type: 'text', text: `Hello, ${name}!` }]
-    })
-);
-
-async function main() {
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
-}
-
-main();
+    warmAfterConsecutiveCalls: 2,
+    demoteAfterUnusedTurns: 2,
+    freezeAfterUnusedTurns: 5
+  },
+  skills: {
+    chapters: [
+      {
+        id: 'page-inspection',
+        title: 'Page inspection',
+        summary: 'Open the page, snapshot it, then expand diagnostics only when needed.'
+      }
+    ]
+  }
+});
 ```
 
-Ready to build something real? Follow the step-by-step quickstart tutorials:
+Non-TypeScript projects can use `mcp-plus.json`:
 
-- [Build a weather server](docs/server-quickstart.md) — server quickstart
-- [Build an LLM-powered chatbot](docs/client-quickstart.md) — client quickstart
+```json
+{
+  "server": {
+    "id": "browser",
+    "title": "Browser MCP",
+    "summary": "Browser automation with folded low-frequency diagnostics."
+  },
+  "exposure": {
+    "pinnedTools": ["browser.open", "page.snapshot"],
+    "indexedTools": ["network.status"],
+    "toolCards": {
+      "network.status": {
+        "title": "Network status",
+        "summary": "Inspect network requests only when diagnostics are needed.",
+        "keywords": ["network", "requests"]
+      }
+    }
+  },
+  "skills": {
+    "chapters": [
+      {
+        "id": "page-inspection",
+        "title": "Page inspection",
+        "summary": "Open the page, snapshot it, then expand diagnostics only when needed."
+      }
+    ]
+  }
+}
+```
 
-The complete code for each tutorial is in [`examples/server-quickstart/`](https://github.com/modelcontextprotocol/typescript-sdk/tree/main/examples/server-quickstart/) and
-[`examples/client-quickstart/`](https://github.com/modelcontextprotocol/typescript-sdk/tree/main/examples/client-quickstart/). For more advanced runnable examples, see:
+The manifest does not replace the MCP server. It is a sidecar policy layer that can be consumed by a wrapper, gateway, or future Praxis adapter.
 
-- [`examples/server/README.md`](examples/server/README.md) — server examples index
-- [`examples/client/README.md`](examples/client/README.md) — client examples index
+### 3. Compile A Native Tool Inventory Into An MCP+ Surface
 
-## Documentation
+```ts
+import {
+  compileMcpPlusManifest,
+  lowerExposurePlanToMcpSurface,
+  planExposure
+} from '@praxis-ai/mcp-plus';
+import manifest from './mcp-plus.config.js';
 
-- [Server Guide](docs/server.md) — building MCP servers: transports, tools, resources, prompts, server-initiated requests, and deployment
-- [Client Guide](docs/client.md) — building MCP clients: connecting, tools, resources, prompts, server-initiated requests, and error handling
-- [FAQ](docs/faq.md) — frequently asked questions and troubleshooting
-- [API docs](https://modelcontextprotocol.github.io/typescript-sdk/)
-- [MCP documentation](https://modelcontextprotocol.io/docs)
-- [MCP specification](https://modelcontextprotocol.io/specification/latest)
+const graph = compileMcpPlusManifest(manifest, nativeToolsFromToolsList);
+const plan = planExposure(graph, {
+  serverId: manifest.server.id,
+  mode: 'expanded',
+  activeTools: []
+});
 
-### Building docs locally
+const surface = lowerExposurePlanToMcpSurface(plan);
+```
 
-To generate the API reference documentation locally:
+`surface.tools` remains MCP-compatible. `surface.sidecar` contains compact server, tool, and skill index metadata for MCP+-aware wrappers or host adapters.
+
+## What The Model Sees In Wrapper Mode
+
+Wrapper mode exposes ordinary MCP tools:
+
+- pinned native tools with full schemas;
+- `mcp_plus.expand` for activating folded tools;
+- `mcp_plus.skill_read` for reading stored server skills;
+- `mcp_plus.skill_write` for explicit skill writes;
+- `mcp_plus.finish` for finishing a workflow and deciding whether to write a reusable skill card.
+
+The folded indexes are compact. A tool index entry is a capability card, not a full schema:
+
+```ts
+type ToolIndexEntry = {
+  id: string;
+  title: string;
+  summary: string;
+  activation: {
+    serverId: string;
+    toolName: string;
+  };
+  pinned: boolean;
+};
+```
+
+A skill index entry is also compact. It should help the model decide whether to read the full skill note:
+
+```ts
+type SkillIndexEntry = {
+  id: string;
+  title: string;
+  summary: string;
+  serverId: string;
+  whenToUse?: string;
+  why?: string;
+  pitfallsPreview?: string[];
+};
+```
+
+Full skill bodies live in the configured skill store and are read with `mcp_plus.skill_read`.
+
+## Repository Map
+
+- `packages/mcp-plus`: current MCP+ core package, published as `@praxis-ai/mcp-plus`.
+- `examples/mcp-plus-browser-style`: minimal manifest and exposure-planning example.
+- `examples/mcp-plus-real-server-pilot`: standard MCP stdio discovery pilot using the official MCP client.
+- `examples/mcp-plus-stdio-proxy`: wrapper-mode proxy with presets for Playwright, Chrome DevTools, GitHub, and custom TS/JSON manifests.
+- `docs/design/mcp-plus-exposure-layer.md`: design notes for wrapper/native modes, indexes, freezing, and measurement.
+- `docs/migration-from-mcp.md`: practical guide for adding MCP+ wrapper mode to an existing MCP server.
+- `.experiments/codex-mcp-packet`: local benchmark harness. This is intentionally ignored and not part of the package surface.
+
+## Status
+
+This repository is still early. The current working surface is wrapper mode and the exposure planner:
+
+- standard MCP discovery from downstream servers;
+- transparent forwarding for non-tool MCP requests and notifications;
+- pinned/indexed tool exposure;
+- compact tool and skill indexes;
+- `mcp_plus.expand`;
+- `mcp_plus.finish`-based skill write decisions;
+- file-backed per-server skill notes.
+
+The next developer-facing work should be:
+
+- Streamable HTTP and legacy SSE wrapper adapters;
+- server-initiated request bridging for sampling, roots, and elicitation;
+- CLI sugar for generating a sidecar from an existing MCP `tools/list`;
+- docs for native/Praxis mode once the host adapter exists.
+
+## Verification
 
 ```bash
-pnpm docs          # Generate V2 docs only (output: tmp/docs/)
-pnpm docs:multi    # Generate combined V1 + V2 docs (output: tmp/docs-combined/)
+pnpm --filter @praxis-ai/mcp-plus test
+pnpm --filter @mcp-plus/example-stdio-proxy test
+pnpm --filter @mcp-plus/example-stdio-proxy typecheck
 ```
 
-The `docs:multi` script checks out both the `v1.x` and `main` branches via git worktrees, builds each, and produces a combined site with V1 docs at the root and V2 docs under `/v2/`.
+## Publishing `@praxis-ai/mcp-plus`
 
-## v1 (legacy) documentation and fixes
+The package is published from `packages/mcp-plus` as `@praxis-ai/mcp-plus`.
+It intentionally has no runtime dependencies; development-only tooling stays in `devDependencies`, and the published package only includes `dist`.
 
-If you are using the **v1** generation of the SDK, the **v1 API documentation** is available at [`https://ts.sdk.modelcontextprotocol.io/`](https://ts.sdk.modelcontextprotocol.io/). The v1 source code and any v1-specific fixes live on the long-lived
-[`v1.x` branch](https://github.com/modelcontextprotocol/typescript-sdk/tree/v1.x). V2 API docs are at [`/v2/`](https://ts.sdk.modelcontextprotocol.io/v2/).
+Publishing is handled by `.github/workflows/publish-mcp-plus.yml` on pushes to `main` that touch the MCP+ package, workspace lockfile, or the workflow itself. Add an npm automation token as the repository secret `NPM_TOKEN`; the workflow tests, typechecks, dry-runs the package, checks whether the exact package version already exists, and publishes only unpublished versions.
 
-## Contributing
+## Compatibility Promise
 
-Issues and pull requests are welcome on GitHub at <https://github.com/modelcontextprotocol/typescript-sdk>.
-
-## License
-
-This project is licensed under the Apache License 2.0 for new contributions, with existing code under MIT. See the [LICENSE](LICENSE) file for details.
+MCP+ should always preserve the native MCP shape at the runtime boundary. Standard MCP clients should not need to understand MCP+ metadata for normal tool execution. MCP+ metadata is for wrappers, gateways, and host adapters that want better exposure planning, skill lifecycle, and context efficiency.

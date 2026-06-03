@@ -6,7 +6,7 @@
         "typecheck": "tsgo -p tsconfig.json --noEmit"
     },
     "dependencies": {
-        "@mcp-plus/core": "workspace:^"
+        "@praxis-ai/mcp-plus": "workspace:^"
     },
     "devDependencies": {
         "@modelcontextprotocol/tsconfig": "workspace:^",

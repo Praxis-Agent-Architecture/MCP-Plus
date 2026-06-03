@@ -55,6 +55,10 @@ export type McpPlusManifest = {
     skills?: McpPlusSkillPolicy;
 };
 
+export function defineMcpPlusManifest<const TManifest extends McpPlusManifest>(manifest: TManifest): TManifest {
+    return manifest;
+}
+
 export type CapabilityActivation = {
     serverId: string;
     toolName: string;

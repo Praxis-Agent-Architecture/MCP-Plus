@@ -10,7 +10,7 @@ import {
     type McpCompatibleSurface,
     type McpPlusManifest,
     type NativeToolDeclaration
-} from '@mcp-plus/core';
+} from '@praxis-ai/mcp-plus';
 
 export type StdioMcpPlusPilotOptions = {
     command: string;

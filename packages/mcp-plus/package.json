@@ -1,17 +1,33 @@
 {
-    "name": "@mcp-plus/core",
-    "version": "0.0.0",
-    "description": "MCP+ host-side exposure enhancement layer",
+    "name": "@praxis-ai/mcp-plus",
+    "version": "1.0.0",
+    "description": "MCP+ wrapper-mode exposure and authoring layer for Model Context Protocol servers",
     "license": "MIT",
+    "homepage": "https://github.com/Praxis-Agent-Architecture/MCP-Plus#readme",
+    "bugs": {
+        "url": "https://github.com/Praxis-Agent-Architecture/MCP-Plus/issues"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/Praxis-Agent-Architecture/MCP-Plus.git",
+        "directory": "packages/mcp-plus"
+    },
     "type": "module",
+    "sideEffects": false,
     "engines": {
         "node": ">=20"
     },
     "keywords": [
         "mcp",
         "mcp-plus",
-        "tool-exposure"
+        "model-context-protocol",
+        "tool-exposure",
+        "agent-tools",
+        "praxis"
     ],
+    "publishConfig": {
+        "access": "public"
+    },
     "exports": {
         ".": {
             "types": "./dist/index.d.mts",

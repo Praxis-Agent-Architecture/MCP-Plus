@@ -1,0 +1,74 @@
+name: Publish MCP Plus
+
+on:
+    push:
+        branches:
+            - main
+        paths:
+            - '.github/workflows/publish-mcp-plus.yml'
+            - 'common/**'
+            - 'packages/mcp-plus/**'
+            - 'pnpm-lock.yaml'
+            - 'pnpm-workspace.yaml'
+    workflow_dispatch:
+
+concurrency:
+    group: publish-mcp-plus-${{ github.ref }}
+    cancel-in-progress: false
+
+permissions:
+    contents: read
+
+jobs:
+    publish:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v6
+
+            - name: Install pnpm
+              uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
+              with:
+                  run_install: false
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: pnpm
+                  cache-dependency-path: pnpm-lock.yaml
+                  registry-url: 'https://registry.npmjs.org'
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Test MCP Plus package
+              run: pnpm --filter @praxis-ai/mcp-plus test
+
+            - name: Typecheck MCP Plus package
+              run: pnpm --filter @praxis-ai/mcp-plus typecheck
+
+            - name: Pack MCP Plus package
+              working-directory: packages/mcp-plus
+              run: npm pack --dry-run --json
+
+            - name: Check published version
+              id: published
+              working-directory: packages/mcp-plus
+              run: |
+                  NAME="$(node -p "require('./package.json').name")"
+                  VERSION="$(node -p "require('./package.json').version")"
+                  if npm view "${NAME}@${VERSION}" version >/dev/null 2>&1; then
+                    echo "exists=true" >> "$GITHUB_OUTPUT"
+                    echo "${NAME}@${VERSION} already exists on npm; skipping publish."
+                  else
+                    echo "exists=false" >> "$GITHUB_OUTPUT"
+                    echo "${NAME}@${VERSION} is not published yet."
+                  fi
+
+            - name: Publish MCP Plus package
+              if: steps.published.outputs.exists != 'true'
+              working-directory: packages/mcp-plus
+              env:
+                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+              run: npm publish --access public

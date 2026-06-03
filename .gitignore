@@ -24,6 +24,10 @@ node_modules/
 # Optional eslint cache
 .eslintcache
 
+# Local MCP+/Codex capture experiments
+.experiments/
+.playwright-mcp/
+
 # Optional REPL history
 .node_repl_history
 
@@ -39,6 +43,9 @@ node_modules/
 
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
+.vite/
+coverage/
+playwright-report/
 
 .DS_Store
 dist/

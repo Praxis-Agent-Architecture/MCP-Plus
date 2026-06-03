@@ -342,7 +342,7 @@ importers:
 
   examples/mcp-plus-browser-style:
     dependencies:
-      '@mcp-plus/core':
+      '@praxis-ai/mcp-plus':
         specifier: workspace:^
         version: link:../../packages/mcp-plus
     devDependencies:
@@ -358,12 +358,12 @@ importers:
 
   examples/mcp-plus-real-server-pilot:
     dependencies:
-      '@mcp-plus/core':
-        specifier: workspace:^
-        version: link:../../packages/mcp-plus
       '@modelcontextprotocol/client':
         specifier: workspace:^
         version: link:../../packages/client
+      '@praxis-ai/mcp-plus':
+        specifier: workspace:^
+        version: link:../../packages/mcp-plus
     devDependencies:
       '@modelcontextprotocol/tsconfig':
         specifier: workspace:^
@@ -386,12 +386,12 @@ importers:
 
   examples/mcp-plus-stdio-proxy:
     dependencies:
-      '@mcp-plus/core':
-        specifier: workspace:^
-        version: link:../../packages/mcp-plus
       '@modelcontextprotocol/client':
         specifier: workspace:^
         version: link:../../packages/client
+      '@praxis-ai/mcp-plus':
+        specifier: workspace:^
+        version: link:../../packages/mcp-plus
     devDependencies:
       '@modelcontextprotocol/tsconfig':
         specifier: workspace:^

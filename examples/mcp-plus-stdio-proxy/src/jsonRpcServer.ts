@@ -1,4 +1,4 @@
-import type { NativeToolDeclaration } from '@mcp-plus/core';
+import type { NativeToolDeclaration } from '@praxis-ai/mcp-plus';
 
 import type { ProxyRuntime } from './proxyRuntime.js';
 
@@ -16,30 +16,20 @@ export type JsonRpcResponse = {
     error?: {
         code: number;
         message: string;
+        data?: unknown;
     };
 };
 
 export function createJsonRpcHandler(runtime: ProxyRuntime): (request: JsonRpcRequest) => Promise<JsonRpcResponse | undefined> {
     return async request => {
         if (request.id === undefined) {
+            await runtime.forwardNotification(request.method, request.params);
             return undefined;
         }
 
         try {
             if (request.method === 'initialize') {
-                await runtime.initialize();
-                return success(request.id, {
-                    protocolVersion: '2025-06-18',
-                    capabilities: {
-                        tools: {
-                            listChanged: true
-                        }
-                    },
-                    serverInfo: {
-                        name: 'mcp-plus-stdio-proxy',
-                        version: '0.0.0'
-                    }
-                });
+                return success(request.id, await runtime.initialize());
             }
 
             if (request.method === 'tools/list') {
@@ -54,9 +44,14 @@ export function createJsonRpcHandler(runtime: ProxyRuntime): (request: JsonRpcRe
                 return success(request.id, await runtime.callTool(params.name, params.arguments));
             }
 
-            return failure(request.id, -32601, `Method not found: ${request.method}`);
+            return success(request.id, await runtime.forwardRequest(request.method, request.params));
         } catch (error) {
-            return failure(request.id, -32603, error instanceof Error ? error.message : String(error));
+            return failure(
+                request.id,
+                getErrorCode(error),
+                error instanceof Error ? error.message : String(error),
+                getErrorData(error)
+            );
         }
     };
 }
@@ -88,8 +83,8 @@ function success(id: string | number, result: unknown): JsonRpcResponse {
     };
 }
 
-function failure(id: string | number | null, code: number, message: string): JsonRpcResponse {
-    return {
+function failure(id: string | number | null, code: number, message: string, data?: unknown): JsonRpcResponse {
+    const response: JsonRpcResponse = {
         jsonrpc: '2.0',
         id,
         error: {
@@ -97,8 +92,26 @@ function failure(id: string | number | null, code: number, message: string): Jso
             message
         }
     };
+
+    if (data !== undefined && response.error !== undefined) {
+        response.error.data = data;
+    }
+
+    return response;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getErrorCode(error: unknown): number {
+    if (isRecord(error) && typeof error.code === 'number' && Number.isSafeInteger(error.code)) {
+        return error.code;
+    }
+
+    return -32603;
+}
+
+function getErrorData(error: unknown): unknown {
+    return isRecord(error) ? error.data : undefined;
 }

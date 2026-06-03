@@ -1,18 +1,96 @@
-# MCP+
+# @praxis-ai/mcp-plus
 
-MCP+ is a host-side exposure enhancement layer for MCP. It keeps native MCP server, client, and tool-call shapes intact while improving how a host exposes MCP tools to the model.
+MCP+ is a wrapper-mode exposure and authoring layer for Model Context Protocol servers.
 
-MCP+ is not a new protocol and is not an MCP replacement. A standard MCP client should still see standard MCP tools. MCP+ adds a sidecar manifest and wrapper/host policy layer that decides which native MCP schemas stay visible, which capabilities fold into compact index cards,
-and when folded or frozen servers should be expanded again.
+It is not a new protocol and it is not an MCP replacement. MCP+ keeps native MCP server, client, and tool-call shapes intact while helping hosts expose large MCP tool surfaces more efficiently.
 
-## First-Phase Shape
+## Install
 
-- `McpPlusManifest` describes a server card, exposure policy, and skill chapters.
-- `compileMcpPlusManifest(...)` combines sidecar policy with native MCP `tools/list` output.
-- `planExposure(...)` produces a per-turn exposure plan from graph plus runtime state.
-- `lowerExposurePlanToMcpSurface(...)` returns native visible tools plus MCP+ sidecar metadata.
-- `mcp_plus.expand` is the tiny pinned control tool that asks the wrapper to activate folded tools or skill guidance.
-- `McpPlusWrapperRuntime` is a minimal in-memory wrapper runtime for planning and expansion experiments.
+```bash
+npm install @praxis-ai/mcp-plus
+```
 
-Tool indexes contain compact capability cards only. Full native input schemas appear only for pinned, warm, or active tools. Developers can add stable card titles, summaries, and keywords in the sidecar manifest so natural-language expand requests map to folded native tools
-without putting full schemas in the index.
+## Write A Manifest
+
+TypeScript projects can use `mcp-plus.config.ts`:
+
+```ts
+import { defineMcpPlusManifest } from '@praxis-ai/mcp-plus';
+
+export default defineMcpPlusManifest({
+    server: {
+        id: 'browser-plus',
+        title: 'Browser MCP+',
+        summary: 'Browser automation with folded low-frequency diagnostics.'
+    },
+    exposure: {
+        pinnedTools: ['browser.open', 'page.snapshot'],
+        indexedTools: ['network.status'],
+        toolCards: {
+            'network.status': {
+                title: 'Network status',
+                summary: 'Inspect network requests only when diagnostics are needed.',
+                keywords: ['network', 'requests']
+            }
+        },
+        warmAfterConsecutiveCalls: 2,
+        demoteAfterUnusedTurns: 2,
+        freezeAfterUnusedTurns: 5
+    },
+    skills: {
+        chapters: [
+            {
+                id: 'page-inspection',
+                title: 'Page inspection',
+                summary: 'Open the page, snapshot it, then expand diagnostics only when needed.'
+            }
+        ]
+    }
+});
+```
+
+Other languages can use `mcp-plus.json` with the same manifest shape:
+
+```json
+{
+    "server": {
+        "id": "browser-plus",
+        "title": "Browser MCP+",
+        "summary": "Browser automation with folded low-frequency diagnostics."
+    },
+    "exposure": {
+        "pinnedTools": ["browser.open", "page.snapshot"],
+        "indexedTools": ["network.status"]
+    }
+}
+```
+
+## Compile A Native MCP Tool List
+
+```ts
+import { compileMcpPlusManifest, lowerExposurePlanToMcpSurface, planExposure } from '@praxis-ai/mcp-plus';
+import manifest from './mcp-plus.config.js';
+
+const graph = compileMcpPlusManifest(manifest, nativeToolsFromMcpToolsList);
+const plan = planExposure(graph, {
+    serverId: manifest.server.id,
+    mode: 'expanded',
+    activeTools: []
+});
+
+const surface = lowerExposurePlanToMcpSurface(plan);
+```
+
+`surface.tools` is still MCP-compatible. `surface.sidecar` contains compact server, tool, and skill index metadata for MCP+-aware wrappers or host adapters.
+
+## Core Ideas
+
+- pinned tools keep full native MCP schemas visible;
+- indexed tools fold into compact capability cards;
+- `mcp_plus.expand` can activate folded tools in wrapper mode;
+- skill indexes stay compact while full skill notes live in a server-bound skill store;
+- `mcp_plus.finish` lets a wrapper ask the model to preserve reusable workflow experience.
+
+## Compatibility
+
+MCP+ metadata is additive. Standard MCP clients should still be able to interact with the underlying MCP server through standard MCP primitives.

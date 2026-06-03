@@ -7,7 +7,7 @@
         "test": "vitest run"
     },
     "dependencies": {
-        "@mcp-plus/core": "workspace:^",
+        "@praxis-ai/mcp-plus": "workspace:^",
         "@modelcontextprotocol/client": "workspace:^"
     },
     "devDependencies": {

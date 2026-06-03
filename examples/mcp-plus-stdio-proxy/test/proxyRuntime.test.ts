@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createProxyRuntime, type DownstreamMcpClient } from '../src/proxyRuntime.js';
 import { createMemorySkillStore } from '../src/skillStore.js';
-import type { NativeToolDeclaration } from '@mcp-plus/core';
+import type { NativeToolDeclaration } from '@praxis-ai/mcp-plus';
 
 const nativeTools: NativeToolDeclaration[] = [
     {
@@ -79,6 +79,62 @@ describe('MCP+ stdio proxy runtime', () => {
         expect(JSON.stringify(listed.tools)).not.toContain('includeHeaders');
         expect(listed.sidecar.toolIndex).toHaveLength(1);
         expect(listed.sidecar.toolIndex[0]?.id).toBe('browser_network_requests');
+    });
+
+    it('merges downstream MCP capabilities during initialize', async () => {
+        const runtime = createProxyRuntime({
+            manifest: {
+                server: {
+                    id: 'playwright-plus',
+                    title: 'Playwright MCP+',
+                    summary: 'Browser automation with folded lower-frequency capabilities.'
+                },
+                exposure: {
+                    pinnedTools: ['browser_navigate']
+                }
+            },
+            downstream: createDownstreamClient({
+                initializeResult: {
+                    protocolVersion: '2025-06-18',
+                    capabilities: {
+                        resources: {
+                            listChanged: true
+                        },
+                        prompts: {},
+                        logging: {},
+                        completions: {},
+                        tools: {
+                            listChanged: false
+                        }
+                    },
+                    serverInfo: {
+                        name: 'downstream',
+                        version: '1.2.3'
+                    },
+                    instructions: 'Downstream instructions.'
+                }
+            })
+        });
+
+        await expect(runtime.initialize()).resolves.toEqual({
+            protocolVersion: '2025-06-18',
+            capabilities: {
+                resources: {
+                    listChanged: true
+                },
+                prompts: {},
+                logging: {},
+                completions: {},
+                tools: {
+                    listChanged: true
+                }
+            },
+            serverInfo: {
+                name: 'mcp-plus-stdio-proxy',
+                version: '0.0.0'
+            },
+            instructions: 'Downstream instructions.'
+        });
     });
 
     it('expands a folded tool and exposes its schema on the next list', async () => {
@@ -414,17 +470,55 @@ describe('MCP+ stdio proxy runtime', () => {
         );
         expect(downstream.calls).toEqual([{ name: 'browser_navigate', arguments: { url: 'https://example.com' } }]);
     });
+
+    it('forwards non-tool requests and notifications to the downstream MCP server', async () => {
+        const downstream = createDownstreamClient();
+        const runtime = createProxyRuntime({
+            manifest: {
+                server: {
+                    id: 'playwright-plus',
+                    summary: 'Browser automation with folded lower-frequency capabilities.'
+                },
+                exposure: {
+                    pinnedTools: ['browser_navigate']
+                }
+            },
+            downstream
+        });
+
+        await expect(runtime.forwardRequest('resources/list', { cursor: 'next' })).resolves.toEqual({
+            forwarded: 'resources/list',
+            params: { cursor: 'next' }
+        });
+        await runtime.forwardNotification('notifications/initialized', {});
+
+        expect(downstream.requests).toEqual([{ method: 'resources/list', params: { cursor: 'next' } }]);
+        expect(downstream.notifications).toEqual([{ method: 'notifications/initialized', params: {} }]);
+    });
 });
 
 function isCallToolResult(value: unknown): value is { content: Array<{ type: string; text?: string }> } {
     return typeof value === 'object' && value !== null && 'content' in value && Array.isArray(value.content);
 }
 
-function createDownstreamClient(): DownstreamMcpClient & { calls: Array<{ name: string; arguments?: unknown }> } {
+function createDownstreamClient(options?: {
+    initializeResult?: NonNullable<ReturnType<Required<DownstreamMcpClient>['getInitializeResult']>>;
+}): DownstreamMcpClient & {
+    calls: Array<{ name: string; arguments?: unknown }>;
+    requests: Array<{ method: string; params?: unknown }>;
+    notifications: Array<{ method: string; params?: unknown }>;
+} {
     const calls: Array<{ name: string; arguments?: unknown }> = [];
+    const requests: Array<{ method: string; params?: unknown }> = [];
+    const notifications: Array<{ method: string; params?: unknown }> = [];
 
     return {
         calls,
+        requests,
+        notifications,
+        getInitializeResult() {
+            return options?.initializeResult;
+        },
         async listTools() {
             return { tools: nativeTools };
         },
@@ -438,6 +532,16 @@ function createDownstreamClient(): DownstreamMcpClient & { calls: Array<{ name: 
                     }
                 ]
             };
+        },
+        async request(params) {
+            requests.push(params);
+            return {
+                forwarded: params.method,
+                params: params.params
+            };
+        },
+        async notification(params) {
+            notifications.push(params);
         }
     };
 }

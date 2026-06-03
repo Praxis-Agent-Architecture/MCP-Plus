@@ -3,7 +3,7 @@ import {
     lowerExposurePlanToMcpSurface,
     planExposure,
     type NativeToolDeclaration
-} from '@mcp-plus/core';
+} from '@praxis-ai/mcp-plus';
 
 import manifest from '../mcp-plus.config.js';
 

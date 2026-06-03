@@ -1,6 +1,6 @@
-import type { McpPlusManifest } from '@mcp-plus/core';
+import { defineMcpPlusManifest } from '@praxis-ai/mcp-plus';
 
-const config: McpPlusManifest = {
+export default defineMcpPlusManifest({
     server: {
         id: 'browser',
         title: 'Browser MCP',
@@ -29,6 +29,4 @@ const config: McpPlusManifest = {
             }
         ]
     }
-};
-
-export default config;
+});

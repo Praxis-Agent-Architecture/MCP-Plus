@@ -152,7 +152,7 @@ Phase one should produce:
 - a hello or browser-style example showing pinned, indexed, active, and frozen behavior;
 - tests that compare native full exposure with MCP+ folded exposure.
 
-The initial package keeps these pieces in `@mcp-plus/core` until the boundaries are stable enough to split into smaller publishable packages.
+The initial package keeps these pieces in `@praxis-ai/mcp-plus` until the boundaries are stable enough to split into smaller publishable packages.
 
 ## Real Server Pilot
 

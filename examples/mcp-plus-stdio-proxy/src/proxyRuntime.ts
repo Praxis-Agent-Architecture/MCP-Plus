@@ -6,7 +6,7 @@ import {
     type McpCompatibleSurface,
     type McpPlusManifest,
     type NativeToolDeclaration
-} from '@mcp-plus/core';
+} from '@praxis-ai/mcp-plus';
 
 import { createMemorySkillStore, type SkillNote, type SkillStore } from './skillStore.js';
 
@@ -19,9 +19,42 @@ export type DownstreamCallToolParams = {
     arguments?: unknown;
 };
 
+export type DownstreamRequestParams = {
+    method: string;
+    params?: unknown;
+};
+
+export type DownstreamNotificationParams = {
+    method: string;
+    params?: unknown;
+};
+
+export type DownstreamInitializeResult = {
+    protocolVersion?: string;
+    capabilities?: Record<string, unknown>;
+    serverInfo?: {
+        name?: string;
+        version?: string;
+    };
+    instructions?: string;
+};
+
+export type ProxyInitializeResult = {
+    protocolVersion: string;
+    capabilities: Record<string, unknown>;
+    serverInfo: {
+        name: string;
+        version: string;
+    };
+    instructions?: string;
+};
+
 export type DownstreamMcpClient = {
+    getInitializeResult?(): DownstreamInitializeResult | undefined;
     listTools(): Promise<DownstreamListToolsResult>;
     callTool(params: DownstreamCallToolParams): Promise<unknown>;
+    request?(params: DownstreamRequestParams): Promise<unknown>;
+    notification?(params: DownstreamNotificationParams): Promise<void>;
 };
 
 export type ProxyRuntimeOptions = {
@@ -34,9 +67,11 @@ export type ProxyRuntimeOptions = {
 export type ListToolsWithSidecarResult = McpCompatibleSurface;
 
 export type ProxyRuntime = {
-    initialize(): Promise<void>;
+    initialize(): Promise<ProxyInitializeResult>;
     listTools(): Promise<ListToolsWithSidecarResult>;
     callTool(name: string, args?: unknown): Promise<unknown>;
+    forwardRequest(method: string, params?: unknown): Promise<unknown>;
+    forwardNotification(method: string, params?: unknown): Promise<void>;
 };
 
 export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
@@ -77,6 +112,7 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
     return {
         async initialize() {
             await ensureInitialized();
+            return createProxyInitializeResult(options.downstream.getInitializeResult?.());
         },
 
         async listTools() {
@@ -185,8 +221,51 @@ export function createProxyRuntime(options: ProxyRuntimeOptions): ProxyRuntime {
             const downstreamResult = await options.downstream.callTool({ name, arguments: args });
             const persistedSkillNotes = await skillStore.list(options.manifest.server.id);
             return persistedSkillNotes.length === 0 ? withSkillLifecycleResultReminder(downstreamResult) : downstreamResult;
+        },
+
+        async forwardRequest(method, params) {
+            await ensureInitialized();
+            if (options.downstream.request === undefined) {
+                throw new Error(`Downstream MCP client cannot forward request method: ${method}`);
+            }
+
+            return options.downstream.request({ method, params });
+        },
+
+        async forwardNotification(method, params) {
+            await ensureInitialized();
+            if (options.downstream.notification === undefined) {
+                return;
+            }
+
+            await options.downstream.notification({ method, params });
         }
     };
+}
+
+function createProxyInitializeResult(downstream: DownstreamInitializeResult | undefined): ProxyInitializeResult {
+    const downstreamCapabilities = downstream?.capabilities ?? {};
+    const downstreamTools = isRecord(downstreamCapabilities.tools) ? downstreamCapabilities.tools : {};
+    const result: ProxyInitializeResult = {
+        protocolVersion: downstream?.protocolVersion ?? '2025-06-18',
+        capabilities: {
+            ...downstreamCapabilities,
+            tools: {
+                ...downstreamTools,
+                listChanged: true
+            }
+        },
+        serverInfo: {
+            name: 'mcp-plus-stdio-proxy',
+            version: '0.0.0'
+        }
+    };
+
+    if (downstream?.instructions !== undefined) {
+        result.instructions = downstream.instructions;
+    }
+
+    return result;
 }
 
 function normalizeExpandArgs(args: unknown): { server?: string; request: string } {

@@ -1,16 +1,31 @@
 #!/usr/bin/env node
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
-import type { Tool } from '@modelcontextprotocol/client';
+import type { NotificationMethod, RequestMethod, Tool } from '@modelcontextprotocol/client';
 
+import { installDownstreamNotificationBridge } from './downstreamNotificationBridge.js';
 import { createJsonRpcHandler, type JsonRpcRequest } from './jsonRpcServer.js';
-import { createPresetManifest, type PresetName } from './presets.js';
+import { loadMcpPlusManifest } from './manifestLoader.js';
+import type { PresetName } from './presets.js';
 import { createProxyRuntime } from './proxyRuntime.js';
-import type { NativeToolDeclaration } from '@mcp-plus/core';
+import type { NativeToolDeclaration } from '@praxis-ai/mcp-plus';
 import { createDownstreamEnvironment } from './stdioEnv.js';
 import { createFileSkillStore } from './skillStore.js';
 
+type ForwardedMcpRequest = {
+    method: RequestMethod;
+    params?: Record<string, unknown>;
+};
+
+type ForwardedMcpNotification = {
+    method: NotificationMethod;
+    params?: Record<string, unknown>;
+};
+
 const parsed = parseArgs(process.argv.slice(2));
+const manifest = await loadMcpPlusManifest(
+    parsed.manifestPath === undefined ? { preset: parsed.preset } : { manifestPath: parsed.manifestPath }
+);
 const client = new Client({ name: 'mcp-plus-stdio-proxy-downstream', version: '0.0.0' });
 const transport = new StdioClientTransport({
     command: parsed.command,
@@ -19,11 +34,20 @@ const transport = new StdioClientTransport({
 });
 
 await client.connect(transport);
+installDownstreamNotificationBridge(client, notification => writeJsonRpcNotification(notification.method, notification.params));
 
 const runtime = createProxyRuntime({
-    manifest: createPresetManifest(parsed.preset),
+    manifest,
     skillStore: createFileSkillStore(resolveSkillDirectory()),
     downstream: {
+        getInitializeResult() {
+            return {
+                protocolVersion: client.getNegotiatedProtocolVersion(),
+                capabilities: client.getServerCapabilities() as Record<string, unknown> | undefined,
+                serverInfo: client.getServerVersion(),
+                instructions: client.getInstructions()
+            };
+        },
         async listTools() {
             const result = await client.listTools();
             return {
@@ -32,6 +56,12 @@ const runtime = createProxyRuntime({
         },
         async callTool(params) {
             return client.callTool(params as Parameters<Client['callTool']>[0]);
+        },
+        async request(params) {
+            return client.request(toMcpRequest(params));
+        },
+        async notification(params) {
+            await client.notification(toMcpNotification(params));
         }
     }
 });
@@ -90,16 +120,24 @@ async function closeAndExit(): Promise<void> {
     process.exit(0);
 }
 
-function parseArgs(args: string[]): { preset: PresetName; command: string; args: string[] } {
+function parseArgs(args: string[]): { preset: PresetName; manifestPath?: string; command: string; args: string[] } {
     let preset: PresetName = 'playwright';
+    let manifestPath: string | undefined;
     const separatorIndex = args.indexOf('--');
     if (separatorIndex === -1 || separatorIndex === args.length - 1) {
-        throw new Error('Usage: stdio.ts [--preset playwright|chrome-devtools|github] -- <downstream-command> [...args]');
+        throw new Error(
+            'Usage: stdio.ts [--preset playwright|chrome-devtools|github] [--manifest ./mcp-plus.config.ts] -- <downstream-command> [...args]'
+        );
     }
 
     for (let index = 0; index < separatorIndex; index += 1) {
         if (args[index] === '--preset') {
             preset = parsePreset(args[index + 1]);
+            index += 1;
+            continue;
+        }
+        if (args[index] === '--manifest') {
+            manifestPath = parseManifestPath(args[index + 1]);
             index += 1;
         }
     }
@@ -107,6 +145,7 @@ function parseArgs(args: string[]): { preset: PresetName; command: string; args:
     const commandParts = args.slice(separatorIndex + 1);
     return {
         preset,
+        manifestPath,
         command: commandParts[0]!,
         args: commandParts.slice(1)
     };
@@ -120,6 +159,14 @@ function parsePreset(value: string | undefined): PresetName {
     throw new Error(`Unknown MCP+ preset: ${value ?? '<missing>'}`);
 }
 
+function parseManifestPath(value: string | undefined): string {
+    if (value === undefined || value.length === 0) {
+        throw new Error('Missing MCP+ manifest path after --manifest');
+    }
+
+    return value;
+}
+
 function resolveSkillDirectory(): string {
     return process.env.MCP_PLUS_SKILL_DIR ?? `${process.env.CODEX_HOME ?? process.cwd()}/mcp-plus-skills`;
 }
@@ -130,4 +177,32 @@ function toNativeToolDeclaration(tool: Tool): NativeToolDeclaration {
         description: tool.description ?? tool.title ?? tool.name,
         inputSchema: tool.inputSchema as NativeToolDeclaration['inputSchema']
     };
+}
+
+function toMcpRequest(params: { method: string; params?: unknown }): ForwardedMcpRequest {
+    return {
+        method: params.method as RequestMethod,
+        params: isRecord(params.params) ? params.params : params.params === undefined ? undefined : { value: params.params }
+    };
+}
+
+function toMcpNotification(params: { method: string; params?: unknown }): ForwardedMcpNotification {
+    return {
+        method: params.method as NotificationMethod,
+        params: isRecord(params.params) ? params.params : params.params === undefined ? undefined : { value: params.params }
+    };
+}
+
+function writeJsonRpcNotification(method: string, params?: unknown): void {
+    process.stdout.write(
+        `${JSON.stringify({
+            jsonrpc: '2.0',
+            method,
+            ...(params === undefined ? {} : { params })
+        })}\n`
+    );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

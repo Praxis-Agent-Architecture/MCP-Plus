@@ -6,7 +6,7 @@ export default [
     ...baseConfig,
     {
         settings: {
-            'import/internal-regex': '^@mcp-plus/core'
+            'import/internal-regex': '^@praxis-ai/mcp-plus'
         }
     }
 ];

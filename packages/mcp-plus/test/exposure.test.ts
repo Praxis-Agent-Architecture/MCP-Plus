@@ -4,6 +4,7 @@ import type { McpPlusManifest, NativeToolDeclaration } from '../src/index.js';
 import {
     compileMcpPlusManifest,
     createExpandToolDeclaration,
+    defineMcpPlusManifest,
     estimateExposurePlanImpact,
     ExposurePlanner,
     lowerExposurePlanToMcpSurface,
@@ -76,6 +77,22 @@ const manifest: McpPlusManifest = {
 };
 
 describe('MCP+ exposure planning', () => {
+    test('defines developer-authored manifests without changing their shape', () => {
+        const developerManifest = defineMcpPlusManifest({
+            server: {
+                id: 'custom-plus',
+                summary: 'Custom MCP+ wrapper manifest.'
+            },
+            exposure: {
+                pinnedTools: ['search'],
+                indexedTools: ['admin']
+            }
+        });
+
+        expect(compileMcpPlusManifest(developerManifest, nativeTools).server.id).toBe('custom-plus');
+        expect(developerManifest.exposure.indexedTools).toEqual(['admin']);
+    });
+
     test('keeps full schema out of the tool index while exposing pinned and warm schemas', () => {
         const graph = compileMcpPlusManifest(manifest, nativeTools);
         const plan = planExposure(graph, {
