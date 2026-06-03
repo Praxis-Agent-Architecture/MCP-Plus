@@ -238,6 +238,7 @@ Full skill bodies live in the configured skill store and are read with `mcp_plus
 - `examples/mcp-plus-real-server-pilot`: standard MCP stdio discovery pilot using the official MCP client.
 - `examples/mcp-plus-stdio-proxy`: wrapper-mode proxy with presets for Playwright, Chrome DevTools, GitHub, and custom TS/JSON manifests.
 - `docs/design/mcp-plus-exposure-layer.md`: design notes for wrapper/native modes, indexes, freezing, and measurement.
+- `docs/praxis-integration.md`: technical handoff for mounting MCP+ into Praxis native runtime.
 - `docs/migration-from-mcp.md`: practical guide for adding MCP+ wrapper mode to an existing MCP server.
 - `.experiments/codex-mcp-packet`: local benchmark harness. This is intentionally ignored and not part of the package surface.
 
