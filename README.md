@@ -24,6 +24,22 @@ Large MCP servers can expose many tool schemas at once. In many hosts, those sch
 
 MCP+ addresses those issues without changing MCP itself. The wrapper keeps common tools visible, folds lower-frequency tools into an index, and provides server-bound skill read/write/finish tools so repeated workflows can become reusable guidance.
 
+## Measured Context Savings
+
+The current wrapper mode has been tested with Codex CLI against real MCP servers: Playwright MCP, Chrome DevTools MCP, and GitHub MCP. The benchmark compares native MCP exposure with MCP+ wrapper exposure on equivalent read-only tasks.
+
+The headline metric is **average model-visible MCP tool layer size per request**. Lower is better: it means fewer full tool schemas are being pushed into the model context each turn.
+
+| MCP setup                             | Task                                                                           | Native tool layer | MCP+ tool layer |     Reduction | Other observed result                                 |
+| ------------------------------------- | ------------------------------------------------------------------------------ | ----------------: | --------------: | ------------: | ----------------------------------------------------- |
+| Playwright MCP                        | Open `example.com` and read the page                                           |      25,656 chars |    16,482 chars | 35.8% smaller | Input tokens dropped 8.3%                             |
+| GitHub MCP                            | Read `README.md` and `package.json` from `modelcontextprotocol/typescript-sdk` |      28,792 chars |    19,649 chars | 31.8% smaller | Request body dropped 15.3%; run time dropped 14.8%    |
+| Chrome DevTools MCP                   | Open `example.com` and inspect the page                                        |      31,838 chars |    29,940 chars |  6.0% smaller | Input tokens were roughly flat; run time dropped 2.3% |
+| Playwright + Chrome DevTools + GitHub | Use all three MCPs in one Codex CLI task                                       |      61,207 chars |    53,866 chars | 12.0% smaller | Cache rate improved from 68.0% to 75.8%               |
+
+These are representative local runs from June 3, 2026, not a universal benchmark. The main thing they show is that MCP+ can reduce the schema-heavy part of the model-visible MCP surface while preserving native MCP tool calls. End-to-end token usage still depends on host behavior
+and on whether the wrapper asks the model to use skill or finish tools during the task.
+
 ## Relationship To MCP
 
 MCP servers expose three core building blocks:
@@ -76,34 +92,34 @@ TypeScript projects can use `mcp-plus.config.ts`:
 import { defineMcpPlusManifest } from '@praxis-ai/mcp-plus';
 
 export default defineMcpPlusManifest({
-  server: {
-    id: 'browser',
-    title: 'Browser MCP',
-    summary: 'Browser automation with folded low-frequency diagnostics.'
-  },
-  exposure: {
-    pinnedTools: ['browser.open', 'page.snapshot'],
-    indexedTools: ['network.status'],
-    toolCards: {
-      'network.status': {
-        title: 'Network status',
-        summary: 'Inspect network requests only when diagnostics are needed.',
-        keywords: ['network', 'requests', '网络请求']
-      }
+    server: {
+        id: 'browser',
+        title: 'Browser MCP',
+        summary: 'Browser automation with folded low-frequency diagnostics.'
     },
-    warmAfterConsecutiveCalls: 2,
-    demoteAfterUnusedTurns: 2,
-    freezeAfterUnusedTurns: 5
-  },
-  skills: {
-    chapters: [
-      {
-        id: 'page-inspection',
-        title: 'Page inspection',
-        summary: 'Open the page, snapshot it, then expand diagnostics only when needed.'
-      }
-    ]
-  }
+    exposure: {
+        pinnedTools: ['browser.open', 'page.snapshot'],
+        indexedTools: ['network.status'],
+        toolCards: {
+            'network.status': {
+                title: 'Network status',
+                summary: 'Inspect network requests only when diagnostics are needed.',
+                keywords: ['network', 'requests', '网络请求']
+            }
+        },
+        warmAfterConsecutiveCalls: 2,
+        demoteAfterUnusedTurns: 2,
+        freezeAfterUnusedTurns: 5
+    },
+    skills: {
+        chapters: [
+            {
+                id: 'page-inspection',
+                title: 'Page inspection',
+                summary: 'Open the page, snapshot it, then expand diagnostics only when needed.'
+            }
+        ]
+    }
 });
 ```
 
@@ -111,31 +127,31 @@ Non-TypeScript projects can use `mcp-plus.json`:
 
 ```json
 {
-  "server": {
-    "id": "browser",
-    "title": "Browser MCP",
-    "summary": "Browser automation with folded low-frequency diagnostics."
-  },
-  "exposure": {
-    "pinnedTools": ["browser.open", "page.snapshot"],
-    "indexedTools": ["network.status"],
-    "toolCards": {
-      "network.status": {
-        "title": "Network status",
-        "summary": "Inspect network requests only when diagnostics are needed.",
-        "keywords": ["network", "requests"]
-      }
+    "server": {
+        "id": "browser",
+        "title": "Browser MCP",
+        "summary": "Browser automation with folded low-frequency diagnostics."
+    },
+    "exposure": {
+        "pinnedTools": ["browser.open", "page.snapshot"],
+        "indexedTools": ["network.status"],
+        "toolCards": {
+            "network.status": {
+                "title": "Network status",
+                "summary": "Inspect network requests only when diagnostics are needed.",
+                "keywords": ["network", "requests"]
+            }
+        }
+    },
+    "skills": {
+        "chapters": [
+            {
+                "id": "page-inspection",
+                "title": "Page inspection",
+                "summary": "Open the page, snapshot it, then expand diagnostics only when needed."
+            }
+        ]
     }
-  },
-  "skills": {
-    "chapters": [
-      {
-        "id": "page-inspection",
-        "title": "Page inspection",
-        "summary": "Open the page, snapshot it, then expand diagnostics only when needed."
-      }
-    ]
-  }
 }
 ```
 
@@ -144,18 +160,14 @@ The manifest does not replace the MCP server. It is a sidecar policy layer that 
 ### 3. Compile A Native Tool Inventory Into An MCP+ Surface
 
 ```ts
-import {
-  compileMcpPlusManifest,
-  lowerExposurePlanToMcpSurface,
-  planExposure
-} from '@praxis-ai/mcp-plus';
+import { compileMcpPlusManifest, lowerExposurePlanToMcpSurface, planExposure } from '@praxis-ai/mcp-plus';
 import manifest from './mcp-plus.config.js';
 
 const graph = compileMcpPlusManifest(manifest, nativeToolsFromToolsList);
 const plan = planExposure(graph, {
-  serverId: manifest.server.id,
-  mode: 'expanded',
-  activeTools: []
+    serverId: manifest.server.id,
+    mode: 'expanded',
+    activeTools: []
 });
 
 const surface = lowerExposurePlanToMcpSurface(plan);
@@ -177,14 +189,14 @@ The folded indexes are compact. A tool index entry is a capability card, not a f
 
 ```ts
 type ToolIndexEntry = {
-  id: string;
-  title: string;
-  summary: string;
-  activation: {
-    serverId: string;
-    toolName: string;
-  };
-  pinned: boolean;
+    id: string;
+    title: string;
+    summary: string;
+    activation: {
+        serverId: string;
+        toolName: string;
+    };
+    pinned: boolean;
 };
 ```
 
@@ -192,13 +204,13 @@ A skill index entry is also compact. It should help the model decide whether to 
 
 ```ts
 type SkillIndexEntry = {
-  id: string;
-  title: string;
-  summary: string;
-  serverId: string;
-  whenToUse?: string;
-  why?: string;
-  pitfallsPreview?: string[];
+    id: string;
+    title: string;
+    summary: string;
+    serverId: string;
+    whenToUse?: string;
+    why?: string;
+    pitfallsPreview?: string[];
 };
 ```
 
@@ -243,11 +255,12 @@ pnpm --filter @mcp-plus/example-stdio-proxy typecheck
 
 ## Publishing `@praxis-ai/mcp-plus`
 
-The package is published from `packages/mcp-plus` as `@praxis-ai/mcp-plus`.
-It intentionally has no runtime dependencies; development-only tooling stays in `devDependencies`, and the published package only includes `dist`.
+The package is published from `packages/mcp-plus` as `@praxis-ai/mcp-plus`. It intentionally has no runtime dependencies; development-only tooling stays in `devDependencies`, and the published package only includes `dist`.
 
-Publishing is handled by `.github/workflows/publish-mcp-plus.yml` on pushes to `main` that touch the MCP+ package, workspace lockfile, or the workflow itself. Add an npm automation token as the repository secret `NPM_TOKEN`; the workflow tests, typechecks, dry-runs the package, checks whether the exact package version already exists, and publishes only unpublished versions.
+Publishing is handled by `.github/workflows/publish-mcp-plus.yml` on pushes to `main` that touch the MCP+ package, workspace lockfile, or the workflow itself. Add an npm automation token as the repository secret `NPM_TOKEN`; the workflow tests, typechecks, dry-runs the package,
+checks whether the exact package version already exists, and publishes only unpublished versions.
 
 ## Compatibility Promise
 
-MCP+ should always preserve the native MCP shape at the runtime boundary. Standard MCP clients should not need to understand MCP+ metadata for normal tool execution. MCP+ metadata is for wrappers, gateways, and host adapters that want better exposure planning, skill lifecycle, and context efficiency.
+MCP+ should always preserve the native MCP shape at the runtime boundary. Standard MCP clients should not need to understand MCP+ metadata for normal tool execution. MCP+ metadata is for wrappers, gateways, and host adapters that want better exposure planning, skill lifecycle,
+and context efficiency.
