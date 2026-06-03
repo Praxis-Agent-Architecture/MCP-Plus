@@ -14,6 +14,21 @@ MCP+ adds a small developer-authored sidecar that tells a wrapper or host adapte
 
 Think of the first implementation as a wrapper mode for existing MCP servers. A future native/Praxis mode can use the same MCP+ declarations with deeper host control.
 
+## Install
+
+For Node.js and TypeScript MCP servers, install MCP+ as a normal project dependency:
+
+```bash
+npm install @praxis-ai/mcp-plus
+```
+
+Use this when you want to author MCP+ sidecar manifests, wrapper presets, or host adapters from JavaScript/TypeScript code.
+
+For Python, Go, Rust, Java, or any other non-Node MCP server, you do not need to rewrite the server or add npm to the application itself. Keep the server as a standard MCP server, add an MCP+ manifest or preset, and run it behind an MCP+ wrapper/proxy process. The wrapper talks
+to the downstream server through standard MCP and exposes a smaller MCP-compatible surface to the host.
+
+Global installation is only needed once MCP+ ships a first-class CLI. Until then, prefer project-local installation or `npx`-style wrapper usage.
+
 ## Why
 
 Large MCP servers can expose many tool schemas at once. In many hosts, those schemas become model-visible context every turn. That creates three practical problems:
