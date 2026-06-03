@@ -1,16 +1,16 @@
 {
-    "name": "@modelcontextprotocol/sdk",
+    "name": "mcp-plus-monorepo",
     "private": true,
-    "version": "2.0.0-alpha.0",
-    "description": "Model Context Protocol implementation for TypeScript",
+    "version": "1.0.0",
+    "description": "MCP+ exposure and authoring layer for Model Context Protocol servers",
     "license": "SEE LICENSE IN LICENSE",
-    "author": "Model Context Protocol a Series of LF Projects, LLC.",
-    "homepage": "https://modelcontextprotocol.io",
-    "bugs": "https://github.com/modelcontextprotocol/typescript-sdk/issues",
+    "author": "Praxis Agent Architecture",
+    "homepage": "https://github.com/Praxis-Agent-Architecture/MCP-Plus#readme",
+    "bugs": "https://github.com/Praxis-Agent-Architecture/MCP-Plus/issues",
     "type": "module",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/modelcontextprotocol/typescript-sdk.git"
+        "url": "git+https://github.com/Praxis-Agent-Architecture/MCP-Plus.git"
     },
     "engines": {
         "node": ">=20"
@@ -18,7 +18,11 @@
     "packageManager": "pnpm@10.26.1",
     "keywords": [
         "modelcontextprotocol",
-        "mcp"
+        "mcp",
+        "mcp-plus",
+        "agent-tools",
+        "tool-exposure",
+        "praxis"
     ],
     "scripts": {
         "fetch:spec-types": "tsx scripts/fetch-spec-types.ts",
