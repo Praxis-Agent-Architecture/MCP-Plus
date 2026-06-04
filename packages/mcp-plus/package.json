@@ -1,6 +1,6 @@
 {
     "name": "@praxis-ai/mcp-plus",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "MCP+ wrapper-mode exposure and authoring layer for Model Context Protocol servers",
     "license": "MIT",
     "homepage": "https://github.com/Praxis-Agent-Architecture/MCP-Plus#readme",
