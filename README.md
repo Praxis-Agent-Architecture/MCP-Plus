@@ -251,6 +251,8 @@ This repository is still early. The current working surface is wrapper mode and 
 - pinned/indexed tool exposure;
 - compact tool and skill indexes;
 - `mcp_plus.expand`;
+- `mcp_plus.init` and `mcp_plus.reprofile` control tool declarations;
+- profile proposal validation and manifest/profile/overlay merge helpers;
 - `mcp_plus.finish`-based skill write decisions;
 - file-backed per-server skill notes.
 
@@ -259,7 +261,7 @@ The next developer-facing work should be:
 - Streamable HTTP and legacy SSE wrapper adapters;
 - server-initiated request bridging for sampling, roots, and elicitation;
 - CLI sugar for generating a sidecar from an existing MCP `tools/list`;
-- docs for native/Praxis mode once the host adapter exists.
+- native/Praxis host adapters implemented by their owning runtimes.
 
 ## Verification
 

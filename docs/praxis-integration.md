@@ -23,6 +23,13 @@ npm install @praxis-ai/mcp-plus
 Current exported API lives in `packages/mcp-plus/src/index.ts`:
 
 - `defineMcpPlusManifest(manifest)`
+- `createInitToolDeclaration()`
+- `createReprofileToolDeclaration()`
+- `validateProfileProposal(proposal, nativeTools, options)`
+- `normalizeProfileProposal(proposal)`
+- `createLearnedProfileFromProposal(proposal)`
+- `mergeManifestWithProfileProposal(manifest, proposal, options)`
+- `mergeMcpPlusPolicy({ manifest, learnedProfile, runtimeOverlay })`
 - `compileMcpPlusManifest(manifest, nativeTools)`
 - `planExposure(graph, state)`
 - `lowerExposurePlanToMcpSurface(plan)`
@@ -31,6 +38,24 @@ Current exported API lives in `packages/mcp-plus/src/index.ts`:
 - `McpPlusWrapperRuntime`
 
 The package is TypeScript/Node-first. Praxis can import it directly when the adapter is implemented in TS. Other language MCP servers should be treated as downstream standard MCP servers and mounted through a Praxis-side proxy/adapter.
+
+## Boundary Handshake
+
+Praxis confirmed the runtime boundary:
+
+- MCP remains the protocol boundary.
+- MCP+ defines the enhancement contract.
+- Praxis owns native runtime lifecycle, state, storage, prompt layout, policy, and execution.
+
+Concrete Praxis defaults:
+
+- model-visible tool schema refresh boundary: `session checkpoint`;
+- learned profile persistence key: `serverId + project`;
+- runtime overlay key: `serverId + session`;
+- skill store default key: `serverId + project`, with optional session-local pending state;
+- reprofile trigger: Praxis-owned. The first policy is indexed tool consecutive usage `>= 6`, scheduling reprofile at the next session checkpoint.
+
+MCP+ docs and helpers must not assume a finer boundary such as turn or subtask. Future Praxis runtimes may refine checkpoint into task/subtask boundaries without changing the MCP+ contract.
 
 ## Core Data Model
 
@@ -111,7 +136,7 @@ Meaning:
 - `indexed`: expose only the MCP+ control surface plus compact tool/skill indexes.
 - `frozen`: collapse the whole MCP server to the smallest wake-up surface.
 
-Wrapper mode can only approximate this because host tool schemas are usually fixed per request/turn. Praxis native mode should own this state and refresh model-visible tools at harness boundaries.
+Wrapper mode can only approximate this because host tool schemas are usually fixed per request/turn. Praxis native mode should own this state and refresh model-visible tools at session checkpoints.
 
 ### Plan And Surface
 
@@ -137,29 +162,131 @@ type McpCompatibleSurface = {
 
 `tools` is what ordinary MCP hosts can see. `sidecar` is for MCP+-aware wrappers, gateways, and Praxis.
 
+## Profile Contract
+
+`mcp_plus.init` and `mcp_plus.reprofile` are virtual MCP-shaped control tools. They do not generate or store profiles themselves. The model submits a structured proposal as tool arguments, MCP+ validates/normalizes it, and the host decides whether to accept, merge, and persist
+it.
+
+### Profile Proposal
+
+`McpPlusProfileProposal` describes exposure/profile policy only:
+
+```ts
+type McpPlusProfileProposal = {
+    serverId: string;
+    pinnedTools: string[];
+    warmTools?: string[];
+    indexedTools: string[];
+    alwaysIndexTools?: string[];
+    toolCards: Record<
+        string,
+        {
+            title?: string;
+            summary: string;
+            keywords?: string[];
+        }
+    >;
+    skillChapters?: Array<{
+        id: string;
+        title: string;
+        summary: string;
+    }>;
+    rationale?: Record<string, string>;
+    modeHint?: never;
+};
+```
+
+`modeHint` is intentionally excluded. `expanded | indexed | frozen` is runtime overlay state, not learned profile state.
+
+Validation rules:
+
+- every tool name must come from the current standard MCP `tools/list`;
+- `toolCards` must only reference known tools;
+- `alwaysIndexTools` cannot be pinned by a model proposal;
+- `modeHint` and other runtime lifecycle controls are rejected;
+- proposals are advice, not accepted state.
+
+### Learned Profile
+
+When a host accepts a proposal, it can convert it into a versioned learned profile:
+
+```ts
+type McpPlusLearnedProfile = {
+    schemaVersion: 'mcp-plus.profile.v1';
+    serverId: string;
+    pinnedTools?: string[];
+    warmTools?: string[];
+    indexedTools?: string[];
+    alwaysIndexTools?: string[];
+    toolCards?: Record<string, McpPlusProfileToolCard>;
+    skillChapters?: McpPlusSkillChapter[];
+    rationale?: Record<string, string>;
+};
+```
+
+`schemaVersion` is required so project-scoped profiles can be migrated safely.
+
+### Runtime Overlay
+
+Runtime overlay is host-owned session state. MCP+ exposes it only as merge input, not storage:
+
+```ts
+type McpPlusRuntimeOverlay = {
+    serverId: string;
+    sessionId?: string;
+    exposure?: McpPlusExposurePolicy;
+    skills?: McpPlusSkillPolicy;
+    state?: {
+        mode?: 'expanded' | 'indexed' | 'frozen';
+        activeTools?: string[];
+        pendingReprofile?: boolean;
+        counters?: Record<string, number>;
+    };
+};
+```
+
+`mergeMcpPlusPolicy({ manifest, learnedProfile, runtimeOverlay })` returns an effective manifest-like policy for planning. It does not mutate the source manifest and does not store anything.
+
+Merge priority:
+
+- developer manifest is higher priority than learned profile;
+- developer `alwaysIndexTools` remains a protected constraint;
+- learned profile can add pinned/indexed/tool cards and skill chapters;
+- runtime overlay is the host-owned final merge input, while still respecting always-index constraints.
+
 ## Praxis Native Adapter Shape
 
 Recommended mount flow:
 
 ```ts
-import { compileMcpPlusManifest, lowerExposurePlanToMcpSurface, planExposure, type McpPlusManifest } from '@praxis-ai/mcp-plus';
+import { compileMcpPlusManifest, lowerExposurePlanToMcpSurface, mergeMcpPlusPolicy, planExposure, type McpPlusManifest } from '@praxis-ai/mcp-plus';
 
 export async function mountMcpPlusServer(options: {
     serverId: string;
+    projectId: string;
+    sessionId: string;
     manifest: McpPlusManifest;
     downstream: StandardMcpClient;
     registry: PraxisCapabilityRegistry;
-    exposureState: PraxisExposureStateStore;
+    profileStore: PraxisProfileStore;
+    overlayStore: PraxisRuntimeOverlayStore;
     skills: PraxisSkillStore;
     policy: PraxisPolicyEngine;
     telemetry: PraxisTelemetry;
-    sessionId: string;
 }) {
     const nativeTools = await options.downstream.listTools();
-    const graph = compileMcpPlusManifest(options.manifest, nativeTools);
-    const state = (await options.exposureState.load(options.serverId, options.sessionId)) ?? {
+    const learnedProfile = await options.profileStore.load(options.serverId, options.projectId);
+    const runtimeOverlay = await options.overlayStore.load(options.serverId, options.sessionId);
+    const effectiveManifest = mergeMcpPlusPolicy({
+        manifest: options.manifest,
+        learnedProfile,
+        runtimeOverlay
+    });
+    const graph = compileMcpPlusManifest(effectiveManifest, nativeTools);
+    const state = {
         serverId: options.serverId,
-        mode: 'expanded'
+        mode: runtimeOverlay?.state?.mode ?? 'expanded',
+        activeTools: runtimeOverlay?.state?.activeTools ?? []
     };
 
     const plan = planExposure(graph, state);
@@ -194,7 +321,7 @@ Tool exposure is the first MCP+ target. Resources and prompts should pass throug
 
 ### PraxisCapabilityRegistry
 
-Needs to support dynamic replacement at harness boundaries:
+Needs to support dynamic replacement at session checkpoints:
 
 ```ts
 type PraxisCapabilityRegistry = {
@@ -205,16 +332,9 @@ type PraxisCapabilityRegistry = {
 
 This is the key difference from wrapper mode. Praxis can actually re-render the model-visible tool layer after activation, demotion, or freezing.
 
-### PraxisExposureStateStore
+### Exposure State
 
-Praxis should persist state per server and session:
-
-```ts
-type PraxisExposureStateStore = {
-    load(serverId: string, sessionId: string): Promise<ExposureState | undefined>;
-    save(serverId: string, sessionId: string, state: ExposureState): Promise<void>;
-};
-```
+Praxis should keep exposure state inside the `serverId + session` runtime overlay. MCP+ exposes `ExposureState` for planning, but does not require a standalone state store.
 
 Recommended counters:
 
@@ -231,6 +351,34 @@ Suggested default transitions:
 - warm demotion: warm/active tool unused for `demoteAfterUnusedTurns`.
 - server freeze: server unused for `freezeAfterUnusedTurns`.
 - frozen wake-up: task semantically targets the server, explicit expansion, or tool call request.
+
+Praxis may record these changes during a session, but model-visible tool schemas should refresh only at a session checkpoint.
+
+### PraxisProfileStore
+
+Praxis learned profile identity is project-scoped per server:
+
+```ts
+type PraxisProfileStore = {
+    load(serverId: string, projectId: string): Promise<McpPlusLearnedProfile | undefined>;
+    save(serverId: string, projectId: string, profile: McpPlusLearnedProfile): Promise<void>;
+};
+```
+
+Workspace/user namespaces may be host-side extensions, but MCP+ core should not assume them.
+
+### PraxisRuntimeOverlayStore
+
+Praxis runtime overlay identity is session-scoped per server:
+
+```ts
+type PraxisRuntimeOverlayStore = {
+    load(serverId: string, sessionId: string): Promise<McpPlusRuntimeOverlay | undefined>;
+    save(serverId: string, sessionId: string, overlay: McpPlusRuntimeOverlay): Promise<void>;
+};
+```
+
+The overlay may contain `mode`, active tools, pending reprofile, and session counters. MCP+ should not persist or update this store.
 
 ### PraxisSkillStore
 
@@ -294,7 +442,7 @@ Cannot guarantee:
 
 Praxis can do the complete design because it owns the harness:
 
-- dynamically update model-visible schemas at turn/harness boundaries;
+- dynamically update model-visible schemas at session checkpoints;
 - manage exposure counters without asking the model;
 - freeze whole servers when unused;
 - thaw servers from task intent, expansion requests, or runtime routing;
@@ -374,10 +522,12 @@ Do not put Praxis-only policy into standard MCP schemas unless it is compatible 
 
 ### Phase 2: Dynamic Exposure State
 
-- Add persistent `ExposureStateStore`.
+- Store exposure state inside the `serverId + session` runtime overlay.
 - Track tool calls and unused turns.
 - Implement warm promotion, demotion, and server freeze.
-- Rebuild Praxis tool registry at harness boundaries.
+- Rebuild Praxis tool registry at session checkpoints.
+- Persist learned profiles by `serverId + project`.
+- Persist runtime overlays by `serverId + session`.
 
 ### Phase 3: Skill Lifecycle
 
@@ -399,6 +549,15 @@ Do not put Praxis-only policy into standard MCP schemas unless it is compatible 
 - Add tests for Streamable HTTP, SSE, notifications, progress, cancellation, roots, sampling, elicitation, and auth behavior.
 - Only add MCP+ metadata for these surfaces after pass-through parity is stable.
 
+### Phase 6: Init And Reprofile
+
+- If no developer manifest or learned profile exists, enter init profiling.
+- During init, expose full legacy MCP discovery to the model.
+- Let the model submit `McpPlusProfileProposal` through `mcp_plus.init`.
+- Validate the proposal through `validateProfileProposal`.
+- Persist accepted learned profile by `serverId + project`.
+- If indexed tool consecutive usage reaches the Praxis threshold, schedule `mcp_plus.reprofile` at the next session checkpoint.
+
 ## Acceptance Tests For Praxis
 
 Minimum tests before calling the adapter complete:
@@ -414,11 +573,14 @@ Minimum tests before calling the adapter complete:
 - Full skill body is not injected unless selected/read.
 - Resources and prompts pass through unchanged.
 - Tool calls still reach the downstream standard MCP server with original names and arguments.
+- `mcp_plus.init` rejects unknown tool names and runtime `modeHint`.
+- `mcp_plus.reprofile` proposals cannot pin developer always-index tools.
+- Accepted profile proposals produce `schemaVersion: "mcp-plus.profile.v1"`.
+- Learned profiles are persisted by `serverId + project`.
+- Runtime overlays are session-owned and do not mutate learned profiles.
 
 ## Open Questions For Praxis
 
-- What exact boundary can safely refresh model-visible tools: every turn, every subtask, or only session checkpoints?
 - Should tool expansion be model-requested, runtime-inferred, or both?
 - Where should skill summarization run: post-tool-call hook, finish hook, or end-of-task hook?
-- How should exposure state persist across sessions: user-level, workspace-level, server-level, or project-level?
 - Which Praxis policy fields should be standardized in MCP+ manifests versus kept Praxis-only?

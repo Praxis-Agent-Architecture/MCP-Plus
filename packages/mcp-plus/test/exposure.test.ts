@@ -4,12 +4,19 @@ import type { McpPlusManifest, NativeToolDeclaration } from '../src/index.js';
 import {
     compileMcpPlusManifest,
     createExpandToolDeclaration,
+    createInitToolDeclaration,
+    createLearnedProfileFromProposal,
+    createReprofileToolDeclaration,
     defineMcpPlusManifest,
     estimateExposurePlanImpact,
     ExposurePlanner,
     lowerExposurePlanToMcpSurface,
+    MCP_PLUS_PROFILE_SCHEMA_VERSION,
     McpPlusWrapperRuntime,
-    planExposure
+    mergeManifestWithProfileProposal,
+    mergeMcpPlusPolicy,
+    planExposure,
+    validateProfileProposal
 } from '../src/index.js';
 
 const nativeTools: NativeToolDeclaration[] = [
@@ -188,6 +195,200 @@ describe('MCP+ exposure planning', () => {
                 additionalProperties: false
             }
         });
+    });
+
+    test('defines init and reprofile as standard MCP-shaped profile proposal control tools', () => {
+        expect(createInitToolDeclaration()).toMatchObject({
+            name: 'mcp_plus.init',
+            inputSchema: {
+                type: 'object',
+                required: ['serverId', 'pinnedTools', 'indexedTools', 'toolCards'],
+                additionalProperties: false
+            }
+        });
+        expect(createReprofileToolDeclaration()).toMatchObject({
+            name: 'mcp_plus.reprofile',
+            inputSchema: {
+                type: 'object',
+                required: ['serverId', 'pinnedTools', 'indexedTools', 'toolCards'],
+                additionalProperties: false
+            }
+        });
+        expect(createInitToolDeclaration().inputSchema.properties).not.toHaveProperty('modeHint');
+        expect(createReprofileToolDeclaration().inputSchema.properties).not.toHaveProperty('modeHint');
+    });
+
+    test('rejects invalid profile proposals without assuming runtime storage or lifecycle', () => {
+        const result = validateProfileProposal(
+            {
+                serverId: 'playwright',
+                pinnedTools: ['network.status', 'missing.tool'],
+                indexedTools: ['page.status'],
+                alwaysIndexTools: ['network.status'],
+                toolCards: {
+                    'missing.tool': {
+                        summary: 'Invented tool.'
+                    }
+                },
+                modeHint: 'expanded'
+            },
+            nativeTools,
+            {
+                serverId: 'playwright'
+            }
+        );
+
+        expect(result.valid).toBe(false);
+        expect(result.issues.map(issue => issue.code)).toEqual([
+            'reserved_runtime_field',
+            'unknown_tool',
+            'always_index_pinned',
+            'unknown_tool'
+        ]);
+    });
+
+    test('accepts valid profile proposals and creates versioned learned profiles', () => {
+        const proposal = {
+            serverId: 'playwright',
+            pinnedTools: ['browser.open'],
+            warmTools: ['page.status'],
+            indexedTools: ['network.status'],
+            toolCards: {
+                'network.status': {
+                    summary: 'Inspect network diagnostics only when needed.',
+                    keywords: ['network', 'diagnostics']
+                }
+            },
+            skillChapters: [
+                {
+                    id: 'browser-debugging',
+                    title: 'Browser debugging',
+                    summary: 'Use snapshots first, then expand diagnostics.'
+                }
+            ]
+        };
+
+        expect(validateProfileProposal(proposal, nativeTools, { serverId: 'playwright' })).toEqual({
+            valid: true,
+            issues: []
+        });
+        expect(createLearnedProfileFromProposal(proposal)).toEqual({
+            schemaVersion: MCP_PLUS_PROFILE_SCHEMA_VERSION,
+            serverId: 'playwright',
+            pinnedTools: ['browser.open'],
+            warmTools: ['page.status'],
+            indexedTools: ['network.status'],
+            alwaysIndexTools: undefined,
+            toolCards: {
+                'network.status': {
+                    summary: 'Inspect network diagnostics only when needed.',
+                    keywords: ['network', 'diagnostics']
+                }
+            },
+            skillChapters: [
+                {
+                    id: 'browser-debugging',
+                    title: 'Browser debugging',
+                    summary: 'Use snapshots first, then expand diagnostics.'
+                }
+            ],
+            rationale: undefined
+        });
+    });
+
+    test('merges manifest, learned profile, and runtime overlay without mutating source manifests', () => {
+        const sourceManifest: McpPlusManifest = {
+            server: manifest.server,
+            exposure: {
+                pinnedTools: ['browser.open'],
+                alwaysIndexTools: ['network.status'],
+                toolCards: {
+                    'network.status': {
+                        summary: 'Developer-authored network card.'
+                    }
+                }
+            },
+            skills: {
+                chapters: [
+                    {
+                        id: 'developer-skill',
+                        title: 'Developer skill',
+                        summary: 'Developer-authored chapter.'
+                    }
+                ]
+            }
+        };
+        const before = structuredClone(sourceManifest);
+        const proposal = {
+            serverId: 'playwright',
+            pinnedTools: ['network.status', 'page.status'],
+            indexedTools: ['network.status'],
+            alwaysIndexTools: ['network.status'],
+            toolCards: {
+                'page.status': {
+                    summary: 'Learned page status card.'
+                },
+                'network.status': {
+                    summary: 'Learned network card should not override developer card.'
+                }
+            },
+            skillChapters: [
+                {
+                    id: 'learned-skill',
+                    title: 'Learned skill',
+                    summary: 'Learned chapter.'
+                }
+            ]
+        };
+        const merged = mergeManifestWithProfileProposal(sourceManifest, proposal, {
+            runtimeOverlay: {
+                serverId: 'playwright',
+                sessionId: 'session-1',
+                exposure: {
+                    warmTools: ['page.status']
+                },
+                state: {
+                    mode: 'indexed',
+                    activeTools: ['page.status'],
+                    pendingReprofile: true
+                }
+            }
+        });
+
+        expect(sourceManifest).toEqual(before);
+        expect(merged.exposure?.pinnedTools).toEqual(['browser.open', 'page.status']);
+        expect(merged.exposure?.warmTools).toEqual(['page.status']);
+        expect(merged.exposure?.alwaysIndexTools).toEqual(['network.status']);
+        expect(merged.exposure?.indexedTools).toEqual(['network.status']);
+        expect(merged.exposure?.toolCards).toEqual({
+            'network.status': {
+                summary: 'Developer-authored network card.'
+            },
+            'page.status': {
+                summary: 'Learned page status card.'
+            }
+        });
+        expect(merged.skills?.chapters?.map(chapter => chapter.id)).toEqual(['developer-skill', 'learned-skill']);
+    });
+
+    test('rejects learned profile and overlay for other servers during merge', () => {
+        expect(() =>
+            mergeMcpPlusPolicy({
+                manifest,
+                learnedProfile: {
+                    schemaVersion: MCP_PLUS_PROFILE_SCHEMA_VERSION,
+                    serverId: 'github'
+                }
+            })
+        ).toThrow('learnedProfile server github does not match manifest server playwright');
+        expect(() =>
+            mergeMcpPlusPolicy({
+                manifest,
+                runtimeOverlay: {
+                    serverId: 'github'
+                }
+            })
+        ).toThrow('runtimeOverlay server github does not match manifest server playwright');
     });
 
     test('lowers exposure plans to an MCP-compatible visible surface with sidecar index metadata', () => {

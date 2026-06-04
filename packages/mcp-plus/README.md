@@ -83,11 +83,37 @@ const surface = lowerExposurePlanToMcpSurface(plan);
 
 `surface.tools` is still MCP-compatible. `surface.sidecar` contains compact server, tool, and skill index metadata for MCP+-aware wrappers or host adapters.
 
+## Validate A Learned Profile Proposal
+
+`mcp_plus.init` and `mcp_plus.reprofile` are virtual MCP-shaped control tools. The model submits a structured proposal as tool arguments; MCP+ validates and normalizes the proposal; the host decides whether to accept, merge, and persist it.
+
+```ts
+import { createInitToolDeclaration, createLearnedProfileFromProposal, mergeMcpPlusPolicy, validateProfileProposal } from '@praxis-ai/mcp-plus';
+
+const initTool = createInitToolDeclaration();
+const validation = validateProfileProposal(modelProposal, nativeToolsFromMcpToolsList, {
+    serverId: manifest.server.id,
+    alwaysIndexTools: manifest.exposure?.alwaysIndexTools
+});
+
+if (validation.valid) {
+    const learnedProfile = createLearnedProfileFromProposal(modelProposal);
+    const effectiveManifest = mergeMcpPlusPolicy({
+        manifest,
+        learnedProfile,
+        runtimeOverlay
+    });
+}
+```
+
+Learned profiles use `schemaVersion: "mcp-plus.profile.v1"`. Runtime exposure mode such as `expanded`, `indexed`, or `frozen` belongs to host-owned runtime overlay, not to the model proposal.
+
 ## Core Ideas
 
 - pinned tools keep full native MCP schemas visible;
 - indexed tools fold into compact capability cards;
 - `mcp_plus.expand` can activate folded tools in wrapper mode;
+- `mcp_plus.init` and `mcp_plus.reprofile` define profile proposal contracts without owning runtime storage;
 - skill indexes stay compact while full skill notes live in a server-bound skill store;
 - `mcp_plus.finish` lets a wrapper ask the model to preserve reusable workflow experience.
 

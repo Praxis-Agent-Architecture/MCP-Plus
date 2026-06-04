@@ -2,7 +2,7 @@ export type JsonSchema = {
     type?: string;
     properties?: Record<string, JsonSchema>;
     required?: string[];
-    additionalProperties?: boolean;
+    additionalProperties?: boolean | JsonSchema;
     description?: string;
     enum?: string[];
     items?: JsonSchema;
@@ -150,9 +150,285 @@ export type ExpandResult = {
     mode: ExposureMode;
 };
 
+export const MCP_PLUS_PROFILE_SCHEMA_VERSION = 'mcp-plus.profile.v1' as const;
+
+export type McpPlusProfileSchemaVersion = typeof MCP_PLUS_PROFILE_SCHEMA_VERSION;
+
+export type McpPlusProfileToolCard = {
+    title?: string;
+    summary: string;
+    keywords?: string[];
+};
+
+export type McpPlusProfileProposal = {
+    serverId: string;
+    pinnedTools: string[];
+    warmTools?: string[];
+    indexedTools: string[];
+    alwaysIndexTools?: string[];
+    toolCards: Record<string, McpPlusProfileToolCard>;
+    skillChapters?: McpPlusSkillChapter[];
+    rationale?: Record<string, string>;
+    modeHint?: never;
+};
+
+export type McpPlusLearnedProfile = {
+    schemaVersion: McpPlusProfileSchemaVersion;
+    serverId: string;
+    pinnedTools?: string[];
+    warmTools?: string[];
+    indexedTools?: string[];
+    alwaysIndexTools?: string[];
+    toolCards?: Record<string, McpPlusProfileToolCard>;
+    skillChapters?: McpPlusSkillChapter[];
+    rationale?: Record<string, string>;
+};
+
+export type McpPlusRuntimeOverlay = {
+    serverId: string;
+    sessionId?: string;
+    exposure?: McpPlusExposurePolicy;
+    skills?: McpPlusSkillPolicy;
+    state?: {
+        mode?: ExposureMode;
+        activeTools?: string[];
+        pendingReprofile?: boolean;
+        counters?: Record<string, number>;
+    };
+};
+
+export type ProfileProposalValidationIssueCode =
+    | 'invalid_shape'
+    | 'server_mismatch'
+    | 'unknown_tool'
+    | 'always_index_pinned'
+    | 'invalid_tool_card'
+    | 'invalid_skill_chapter'
+    | 'reserved_runtime_field';
+
+export type ProfileProposalValidationIssue = {
+    code: ProfileProposalValidationIssueCode;
+    message: string;
+    path: string;
+    toolName?: string;
+};
+
+export type ProfileProposalValidationOptions = {
+    serverId?: string;
+    alwaysIndexTools?: readonly string[];
+};
+
+export type ProfileProposalValidationResult = {
+    valid: boolean;
+    issues: ProfileProposalValidationIssue[];
+};
+
+export type MergeMcpPlusPolicyInput = {
+    manifest: McpPlusManifest;
+    learnedProfile?: McpPlusLearnedProfile;
+    runtimeOverlay?: McpPlusRuntimeOverlay;
+};
+
 const DEFAULT_FREEZE_AFTER_UNUSED_TURNS = 5;
 const DEFAULT_WARM_AFTER_CONSECUTIVE_CALLS = 2;
 const DEFAULT_DEMOTE_AFTER_UNUSED_TURNS = 2;
+
+export function createInitToolDeclaration(): NativeToolDeclaration {
+    return {
+        name: 'mcp_plus.init',
+        description: [
+            'Submit an initial MCP+ exposure profile proposal for this standard MCP server.',
+            'Use only tool names from the current tools/list result.',
+            'Do not include runtime exposure mode; expanded/indexed/frozen is host-owned session state.'
+        ].join(' '),
+        inputSchema: createProfileProposalInputSchema('Initial profile proposal to validate.')
+    };
+}
+
+export function createReprofileToolDeclaration(): NativeToolDeclaration {
+    return {
+        name: 'mcp_plus.reprofile',
+        description: [
+            'Submit an updated MCP+ exposure profile proposal after host-selected reprofile.',
+            'Use only tool names from the current tools/list result.',
+            'This is a proposal only; the host decides whether to accept, merge, and persist it.'
+        ].join(' '),
+        inputSchema: createProfileProposalInputSchema('Updated profile proposal to validate.')
+    };
+}
+
+export function validateProfileProposal(
+    proposal: unknown,
+    nativeTools: readonly NativeToolDeclaration[],
+    options: ProfileProposalValidationOptions = {}
+): ProfileProposalValidationResult {
+    const issues: ProfileProposalValidationIssue[] = [];
+    const knownToolNames = new Set(nativeTools.map(tool => tool.name));
+
+    if (!isRecord(proposal)) {
+        return {
+            valid: false,
+            issues: [
+                {
+                    code: 'invalid_shape',
+                    message: 'Profile proposal must be an object.',
+                    path: '$'
+                }
+            ]
+        };
+    }
+
+    if ('modeHint' in proposal) {
+        issues.push({
+            code: 'reserved_runtime_field',
+            message: 'modeHint is runtime overlay state and is not allowed in McpPlusProfileProposal v1.',
+            path: '$.modeHint'
+        });
+    }
+
+    if (!isString(proposal.serverId)) {
+        issues.push({
+            code: 'invalid_shape',
+            message: 'serverId must be a string.',
+            path: '$.serverId'
+        });
+    } else if (options.serverId !== undefined && proposal.serverId !== options.serverId) {
+        issues.push({
+            code: 'server_mismatch',
+            message: `Profile proposal serverId ${proposal.serverId} does not match expected server ${options.serverId}.`,
+            path: '$.serverId'
+        });
+    }
+
+    const pinnedTools = readStringArray(proposal, 'pinnedTools', issues, true);
+    const warmTools = readStringArray(proposal, 'warmTools', issues, false);
+    const indexedTools = readStringArray(proposal, 'indexedTools', issues, true);
+    const alwaysIndexTools = readStringArray(proposal, 'alwaysIndexTools', issues, false);
+    const protectedAlwaysIndexTools = new Set([...(options.alwaysIndexTools ?? []), ...alwaysIndexTools]);
+
+    validateToolNames(pinnedTools, knownToolNames, issues, '$.pinnedTools');
+    validateToolNames(warmTools, knownToolNames, issues, '$.warmTools');
+    validateToolNames(indexedTools, knownToolNames, issues, '$.indexedTools');
+    validateToolNames(alwaysIndexTools, knownToolNames, issues, '$.alwaysIndexTools');
+
+    for (const toolName of pinnedTools) {
+        if (protectedAlwaysIndexTools.has(toolName)) {
+            issues.push({
+                code: 'always_index_pinned',
+                message: `Tool ${toolName} is always-index and cannot be pinned by a profile proposal.`,
+                path: '$.pinnedTools',
+                toolName
+            });
+        }
+    }
+
+    validateToolCards(proposal.toolCards, knownToolNames, issues);
+    validateSkillChapters(proposal.skillChapters, issues);
+
+    return {
+        valid: issues.length === 0,
+        issues
+    };
+}
+
+export function normalizeProfileProposal(proposal: McpPlusProfileProposal): McpPlusProfileProposal {
+    return {
+        serverId: proposal.serverId,
+        pinnedTools: uniqueSorted(proposal.pinnedTools),
+        warmTools: optionalUniqueSorted(proposal.warmTools),
+        indexedTools: uniqueSorted(proposal.indexedTools),
+        alwaysIndexTools: optionalUniqueSorted(proposal.alwaysIndexTools),
+        toolCards: cloneToolCards(proposal.toolCards),
+        skillChapters: proposal.skillChapters?.map(chapter => ({ ...chapter })),
+        rationale: proposal.rationale === undefined ? undefined : { ...proposal.rationale }
+    };
+}
+
+export function createLearnedProfileFromProposal(proposal: McpPlusProfileProposal): McpPlusLearnedProfile {
+    const normalized = normalizeProfileProposal(proposal);
+
+    return {
+        schemaVersion: MCP_PLUS_PROFILE_SCHEMA_VERSION,
+        serverId: normalized.serverId,
+        pinnedTools: normalized.pinnedTools,
+        warmTools: normalized.warmTools,
+        indexedTools: normalized.indexedTools,
+        alwaysIndexTools: normalized.alwaysIndexTools,
+        toolCards: normalized.toolCards,
+        skillChapters: normalized.skillChapters,
+        rationale: normalized.rationale
+    };
+}
+
+export function mergeManifestWithProfileProposal(
+    manifest: McpPlusManifest,
+    proposal: McpPlusProfileProposal,
+    options: { runtimeOverlay?: McpPlusRuntimeOverlay } = {}
+): McpPlusManifest {
+    return mergeMcpPlusPolicy({
+        manifest,
+        learnedProfile: createLearnedProfileFromProposal(proposal),
+        runtimeOverlay: options.runtimeOverlay
+    });
+}
+
+export function mergeMcpPlusPolicy(input: MergeMcpPlusPolicyInput): McpPlusManifest {
+    const manifest = input.manifest;
+    const learnedProfile = input.learnedProfile;
+    const runtimeOverlay = input.runtimeOverlay;
+    const manifestExposure = manifest.exposure ?? {};
+    const overlayExposure = runtimeOverlay?.exposure ?? {};
+
+    assertProfileServerMatchesManifest(manifest, learnedProfile, 'learnedProfile');
+    assertOverlayServerMatchesManifest(manifest, runtimeOverlay);
+
+    const alwaysIndexTools = uniqueSorted([
+        ...(manifestExposure.alwaysIndexTools ?? []),
+        ...(learnedProfile?.alwaysIndexTools ?? []),
+        ...(overlayExposure.alwaysIndexTools ?? [])
+    ]);
+    const alwaysIndexToolSet = new Set(alwaysIndexTools);
+    const pinnedTools = uniqueSorted([
+        ...(manifestExposure.pinnedTools ?? []),
+        ...(learnedProfile?.pinnedTools ?? []).filter(toolName => !alwaysIndexToolSet.has(toolName)),
+        ...(overlayExposure.pinnedTools ?? []).filter(toolName => !alwaysIndexToolSet.has(toolName))
+    ]);
+    const warmTools = uniqueSorted([
+        ...(manifestExposure.warmTools ?? []),
+        ...(learnedProfile?.warmTools ?? []).filter(toolName => !alwaysIndexToolSet.has(toolName)),
+        ...(overlayExposure.warmTools ?? []).filter(toolName => !alwaysIndexToolSet.has(toolName))
+    ]);
+    const indexedTools = uniqueSorted([
+        ...(manifestExposure.indexedTools ?? []),
+        ...(learnedProfile?.indexedTools ?? []),
+        ...(overlayExposure.indexedTools ?? []),
+        ...alwaysIndexTools
+    ]);
+    const toolCards: Record<string, McpPlusProfileToolCard> = Object.assign(
+        {},
+        learnedProfile?.toolCards,
+        manifestExposure.toolCards,
+        overlayExposure.toolCards
+    );
+    const skillChapters = mergeSkillChapters(learnedProfile?.skillChapters, manifest.skills?.chapters, runtimeOverlay?.skills?.chapters);
+
+    return {
+        server: { ...manifest.server },
+        exposure: {
+            ...manifestExposure,
+            ...overlayExposure,
+            pinnedTools,
+            warmTools,
+            indexedTools,
+            alwaysIndexTools,
+            toolCards
+        },
+        skills:
+            manifest.skills === undefined && runtimeOverlay?.skills === undefined && skillChapters.length === 0
+                ? undefined
+                : Object.assign({}, manifest.skills, runtimeOverlay?.skills, { chapters: skillChapters })
+    };
+}
 
 export function compileMcpPlusManifest(manifest: McpPlusManifest, nativeTools: NativeToolDeclaration[]): ExposureGraph {
     const pinnedToolNames = new Set(manifest.exposure?.pinnedTools);
@@ -420,4 +696,258 @@ function isMeaningfulSearchTerm(term: string): boolean {
     }
 
     return [...term].some(character => (character.codePointAt(0) ?? 0) > 0x7f) || term.length >= 3;
+}
+
+function createProfileProposalInputSchema(description: string): JsonSchema {
+    return {
+        type: 'object',
+        description,
+        properties: {
+            serverId: {
+                type: 'string',
+                description: 'MCP server id this proposal applies to.'
+            },
+            pinnedTools: {
+                type: 'array',
+                description: 'Tool names to keep visible as full schemas when the server is expanded.',
+                items: { type: 'string' }
+            },
+            warmTools: {
+                type: 'array',
+                description: 'Tool names that may stay visible initially, subject to host-owned demotion policy.',
+                items: { type: 'string' }
+            },
+            indexedTools: {
+                type: 'array',
+                description: 'Tool names represented by compact capability cards until activated.',
+                items: { type: 'string' }
+            },
+            alwaysIndexTools: {
+                type: 'array',
+                description: 'Tool names that should remain indexed and must not be automatically pinned.',
+                items: { type: 'string' }
+            },
+            toolCards: {
+                type: 'object',
+                description: 'Compact capability cards keyed by tool name.',
+                additionalProperties: {
+                    type: 'object',
+                    properties: {
+                        title: { type: 'string' },
+                        summary: { type: 'string' },
+                        keywords: {
+                            type: 'array',
+                            items: { type: 'string' }
+                        }
+                    },
+                    required: ['summary'],
+                    additionalProperties: false
+                }
+            },
+            skillChapters: {
+                type: 'array',
+                description: 'Initial compact server-bound skill chapters.',
+                items: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string' },
+                        title: { type: 'string' },
+                        summary: { type: 'string' }
+                    },
+                    required: ['id', 'title', 'summary'],
+                    additionalProperties: false
+                }
+            },
+            rationale: {
+                type: 'object',
+                description: 'Optional short rationale keyed by tool name or policy area.',
+                additionalProperties: { type: 'string' }
+            }
+        },
+        required: ['serverId', 'pinnedTools', 'indexedTools', 'toolCards'],
+        additionalProperties: false
+    };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isString(value: unknown): value is string {
+    return typeof value === 'string';
+}
+
+function readStringArray(
+    object: Record<string, unknown>,
+    key: string,
+    issues: ProfileProposalValidationIssue[],
+    required: boolean
+): string[] {
+    const value = object[key];
+    if (value === undefined) {
+        if (required) {
+            issues.push({
+                code: 'invalid_shape',
+                message: `${key} must be an array of strings.`,
+                path: `$.${key}`
+            });
+        }
+        return [];
+    }
+
+    if (!Array.isArray(value) || !value.every(item => isString(item))) {
+        issues.push({
+            code: 'invalid_shape',
+            message: `${key} must be an array of strings.`,
+            path: `$.${key}`
+        });
+        return [];
+    }
+
+    return value;
+}
+
+function validateToolNames(
+    toolNames: readonly string[],
+    knownToolNames: ReadonlySet<string>,
+    issues: ProfileProposalValidationIssue[],
+    path: string
+): void {
+    for (const toolName of toolNames) {
+        if (!knownToolNames.has(toolName)) {
+            issues.push({
+                code: 'unknown_tool',
+                message: `Unknown MCP tool name ${toolName}.`,
+                path,
+                toolName
+            });
+        }
+    }
+}
+
+function validateToolCards(value: unknown, knownToolNames: ReadonlySet<string>, issues: ProfileProposalValidationIssue[]): void {
+    if (!isRecord(value)) {
+        issues.push({
+            code: 'invalid_tool_card',
+            message: 'toolCards must be an object keyed by tool name.',
+            path: '$.toolCards'
+        });
+        return;
+    }
+
+    for (const [toolName, card] of Object.entries(value)) {
+        if (!knownToolNames.has(toolName)) {
+            issues.push({
+                code: 'unknown_tool',
+                message: `toolCards references unknown MCP tool name ${toolName}.`,
+                path: `$.toolCards.${toolName}`,
+                toolName
+            });
+        }
+
+        if (!isRecord(card) || !isString(card.summary)) {
+            issues.push({
+                code: 'invalid_tool_card',
+                message: `toolCards.${toolName} must include a string summary.`,
+                path: `$.toolCards.${toolName}`,
+                toolName
+            });
+            continue;
+        }
+
+        if (card.title !== undefined && !isString(card.title)) {
+            issues.push({
+                code: 'invalid_tool_card',
+                message: `toolCards.${toolName}.title must be a string when provided.`,
+                path: `$.toolCards.${toolName}.title`,
+                toolName
+            });
+        }
+
+        if (card.keywords !== undefined && (!Array.isArray(card.keywords) || !card.keywords.every(keyword => isString(keyword)))) {
+            issues.push({
+                code: 'invalid_tool_card',
+                message: `toolCards.${toolName}.keywords must be an array of strings when provided.`,
+                path: `$.toolCards.${toolName}.keywords`,
+                toolName
+            });
+        }
+    }
+}
+
+function validateSkillChapters(value: unknown, issues: ProfileProposalValidationIssue[]): void {
+    if (value === undefined) {
+        return;
+    }
+
+    if (!Array.isArray(value)) {
+        issues.push({
+            code: 'invalid_skill_chapter',
+            message: 'skillChapters must be an array when provided.',
+            path: '$.skillChapters'
+        });
+        return;
+    }
+
+    for (const [index, chapter] of value.entries()) {
+        if (!isRecord(chapter) || !isString(chapter.id) || !isString(chapter.title) || !isString(chapter.summary)) {
+            issues.push({
+                code: 'invalid_skill_chapter',
+                message: 'Each skill chapter must include string id, title, and summary.',
+                path: `$.skillChapters.${index}`
+            });
+        }
+    }
+}
+
+function uniqueSorted(values: readonly string[]): string[] {
+    return [...new Set(values)].toSorted();
+}
+
+function optionalUniqueSorted(values: readonly string[] | undefined): string[] | undefined {
+    return values === undefined ? undefined : uniqueSorted(values);
+}
+
+function cloneToolCards(cards: Record<string, McpPlusProfileToolCard>): Record<string, McpPlusProfileToolCard> {
+    return Object.fromEntries(
+        Object.entries(cards)
+            .toSorted(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+            .map(([toolName, card]) => [
+                toolName,
+                {
+                    ...card,
+                    keywords: card.keywords === undefined ? undefined : [...card.keywords]
+                }
+            ])
+    );
+}
+
+function assertProfileServerMatchesManifest(
+    manifest: McpPlusManifest,
+    learnedProfile: McpPlusLearnedProfile | undefined,
+    label: string
+): void {
+    if (learnedProfile !== undefined && learnedProfile.serverId !== manifest.server.id) {
+        throw new Error(`${label} server ${learnedProfile.serverId} does not match manifest server ${manifest.server.id}`);
+    }
+}
+
+function assertOverlayServerMatchesManifest(manifest: McpPlusManifest, runtimeOverlay: McpPlusRuntimeOverlay | undefined): void {
+    if (runtimeOverlay !== undefined && runtimeOverlay.serverId !== manifest.server.id) {
+        throw new Error(`runtimeOverlay server ${runtimeOverlay.serverId} does not match manifest server ${manifest.server.id}`);
+    }
+}
+
+function mergeSkillChapters(
+    learnedChapters: readonly McpPlusSkillChapter[] | undefined,
+    manifestChapters: readonly McpPlusSkillChapter[] | undefined,
+    overlayChapters: readonly McpPlusSkillChapter[] | undefined
+): McpPlusSkillChapter[] {
+    const chapters = new Map<string, McpPlusSkillChapter>();
+
+    for (const chapter of [...(learnedChapters ?? []), ...(manifestChapters ?? []), ...(overlayChapters ?? [])]) {
+        chapters.set(chapter.id, { ...chapter });
+    }
+
+    return [...chapters.values()].toSorted((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
 }
